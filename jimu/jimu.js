@@ -3,6 +3,36 @@ import { JimuBleClient } from './jimu_ble.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const clampByte = (v) => ((v % 256) + 256) % 256;
+const encodeMotorSpeed = (speed = 0) => {
+  const clamped = Math.max(-150, Math.min(150, Math.round(speed)));
+  const encoded = clamped < 0 ? 0x10000 + clamped : clamped;
+  return { clamped, hi: (encoded >> 8) & 0xff, lo: encoded & 0xff };
+};
+const encodeMotorDuration = (ms = 6000) => {
+  const capped = Math.max(0, Math.min(ms, 6000));
+  const ticks = Math.round(capped / 10); // protocol uses 0.1s units, max ~6s
+  return { ticks, hi: (ticks >> 8) & 0xff, lo: ticks & 0xff };
+};
+const parseAckLike = (payload = []) => {
+  if (!payload?.length || payload.length > 4) return null;
+  const [cmd, status, maybeId, maybeDetail] = payload;
+  if (typeof status !== 'number') return null;
+  const ok = status === 0x00;
+  return {
+    cmd,
+    status,
+    ok,
+    deviceId: typeof maybeId === 'number' ? maybeId : null,
+    detail: typeof maybeDetail === 'number' ? maybeDetail : null,
+    raw: Array.from(payload),
+  };
+};
+const parseError05 = (payload = []) => {
+  if (!payload?.length || payload[0] !== 0x05) return null;
+  const type = payload[1] ?? 0x00;
+  const maskBytes = payload.slice(2);
+  return { type, maskBytes, raw: Array.from(payload) };
+};
 
 const maskByteToIds = (byte = 0) => {
   const ids = [];
@@ -77,6 +107,8 @@ export class Jimu extends EventEmitter {
       status08: null,
       connected: false,
       battery: null,
+      lastErrorReport: null,
+      lastCommandResult: null,
     };
     this.pingIntervalMs = pingIntervalMs;
     this.batteryIntervalMs = batteryIntervalMs;
@@ -111,6 +143,19 @@ export class Jimu extends EventEmitter {
   }
 
   _onFrame({ payload, cmd, meta }) {
+    const ack = parseAckLike(Array.from(payload));
+    if (ack) {
+      this.state.lastCommandResult = ack;
+      this.emit('commandResult', { ...ack, meta });
+      if (!ack.ok) {
+        this.emit('deviceError', { ...ack, meta });
+      }
+    }
+    const errorReport = parseError05(Array.from(payload));
+    if (errorReport) {
+      this.state.lastErrorReport = errorReport;
+      this.emit('errorReport', { ...errorReport, meta });
+    }
     if (meta?.cmd === 0x08) {
       this.state.status08 = parseStatus08(Array.from(payload));
       this.emit('status', this.state.status08);
@@ -205,6 +250,10 @@ export class Jimu extends EventEmitter {
     await this._send([0x27, 0x00]);
   }
 
+  async queryErrors() {
+    await this._send([0x05, 0x00]);
+  }
+
   // Servos
   async setServoPositions({ ids = [], positions = [], speed = 0x14, tail = [0x00, 0x00] } = {}) {
     if (!ids.length) throw new Error('No servo ids provided');
@@ -230,18 +279,35 @@ export class Jimu extends EventEmitter {
   }
 
   // Motors
-  async rotateMotor(id, speed = 0) {
-    // speed: -100..100 mapped to signed 16-bit
-    const scaled = Math.max(-32767, Math.min(32767, Math.trunc((speed / 100) * 32767)));
-    const val = scaled < 0 ? 0x10000 + scaled : scaled;
-    const hi = (val >> 8) & 0xff;
-    const lo = val & 0xff;
-    // direction encoded in signed magnitude seen in sniff; keep 0x01 (motor count?)
-    await this._send([0x90, 0x01, clampByte(id), hi, lo, 0xff, 0xff]);
+  async rotateMotor(id, speed = 0, durationMs = 6000) {
+    // speed: roughly -150..150 observed; encoded as signed 16-bit, duration capped ~6s (0.1s units)
+    const speedBytes = encodeMotorSpeed(speed);
+    const timeBytes = encodeMotorDuration(durationMs);
+    await this._send([0x90, 0x01, clampByte(id), speedBytes.hi, speedBytes.lo, timeBytes.hi, timeBytes.lo]);
+  }
+
+  async rotateDualMotor(idMask, speed1 = 0, speed2 = 0, durationMs = 6000) {
+    // idMask: bitmask of motor IDs (0x03 => motors 1+2), speeds applied in ascending ID order
+    const s1 = encodeMotorSpeed(speed1);
+    const s2 = encodeMotorSpeed(speed2);
+    const timeBytes = encodeMotorDuration(durationMs);
+    await this._send([
+      0x90,
+      0x01,
+      clampByte(idMask),
+      s1.hi,
+      s1.lo,
+      timeBytes.hi,
+      timeBytes.lo,
+      s2.hi,
+      s2.lo,
+      timeBytes.hi,
+      timeBytes.lo,
+    ]);
   }
 
   async stopMotor(id) {
-    await this._send([0x90, 0x01, clampByte(id), 0x00, 0x00, 0xff, 0xff]);
+    await this.rotateMotor(id, 0, 0);
   }
 
   // Sensors

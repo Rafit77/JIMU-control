@@ -8,14 +8,12 @@ Visual block-based programming app for UBTECH JIMU robots. Lets users assemble B
 - Project-level variables and triggers (start/stop, control panel changes, keyboard, gamepad).
 - Extensible device layer so new sensors/actuators can be added without touching the UI.
 
-## Proposed stack
-- Runtime/UI: TypeScript + React + Vite (web-first) packaged via Electron for desktop; optional PWA mode where Web Bluetooth is supported.
-- Blocks: Google Blockly with custom blocks for JIMU devices, triggers, and control panel widgets.
-- BLE transport:
-  - Desktop (Electron): `@abandonware/noble` for Bluetooth LE, or native Web Bluetooth in Chromium if reliable.
-  - Browser: Web Bluetooth API (Chrome/Edge).
+## Proposed stack (v1 scope)
+- Runtime/UI: TypeScript + React + Vite packaged via Electron (Windows target first).
+- Blocks: Google Blockly (Apache-2.0, GPL-compatible) with custom blocks for JIMU devices, triggers, and control panel widgets.
+- BLE transport (desktop): `@abandonware/noble` via the shared `jimu` library. Web Bluetooth remains optional for future PWA work.
 - State/store: Redux Toolkit or Zustand for low-boilerplate shared state.
-- Packaging: Electron Builder for installers; simple JSON for local projects.
+- Packaging: Electron Builder for installers; projects stored locally as JSON.
 
 ## Application surface
 - Project home: list existing projects (with search/filter), open or create new.
@@ -44,7 +42,25 @@ Visual block-based programming app for UBTECH JIMU robots. Lets users assemble B
 - Each project defines actions (procedures) that are bound to triggers.
 - Project stored as JSON with embedded block XML plus assets directory.
 
-## Next steps
-- Validate BLE protocol for JIMU; document services/characteristics.
-- Define block catalogue and generators to JS/TS runtime.
-- Prototype BLE adapter (desktop + web) and simulator/fake device for offline testing.
+## Next steps (for first usable version)
+- Implement Electron + React shell for Windows.
+- Wire Blockly with a minimal JIMU block set (connect, model config, live sensor/servo/motor control).
+- Integrate the `jimu` library (boot, status, enable, ping, battery poll) as the single device access point.
+- Build Model Config tab (discover modules, show firmware/battery, jog servos/motors, read sensors live).
+- Add local JSON project storage; basic project home and in-project tabs (Model Config first).
+- Add reconnect logic, logging, and error handling for BLE.
+
+## Windows quick start
+1) Clone the repo  
+   `git clone https://github.com/<your-org>/JIMU-control.git`  
+   `cd JIMU-control`
+
+2) Install Node.js (includes npm)  
+   - Download the LTS installer from https://nodejs.org and complete setup, then reopen your terminal.
+
+3) Install dependencies  
+   `npm install`
+
+4) Run the app in dev mode (Vite + Electron)  
+   `npm run dev`
+   - This runs the web UI and the Electron shell together. Ensure Bluetooth is on and the UBTECH brick is powered.

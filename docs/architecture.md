@@ -6,14 +6,14 @@
 - In-project tabs: Model Config, Actions, Functions (Blockly), Control (panel builder/runtime), plus device/status drawer.
 
 ## High-level components
-- Editor shell (Electron + React): hosts project browser, settings/diagnostics, Blockly workspace, control panel UI, and live logs.
-- Blockly layer: default blocks + custom JIMU blocks for sensors/actuators/triggers/control-panel widgets.
+- Editor shell (Electron + React, Windows-first): hosts project browser, settings/diagnostics, Blockly workspace, control panel UI, and live logs.
+- Blockly layer: Google Blockly (Apache-2.0, GPL-compatible) with custom JIMU blocks for sensors/actuators/triggers/control-panel widgets.
 - Codegen/runtime:
   - Blockly JS generator emits JS/TS.
   - Runtime sandbox executes generated code with a provided JIMU SDK (async API for BLE + timing helpers) and shared project variables.
   - Event bus dispatches triggers (start/stop, keyboard, gamepad, control panel events).
 - Device layer:
-  - Transport abstraction: Web Bluetooth or noble (Electron) with the same async interface.
+  - Transport abstraction: `@abandonware/noble` in Electron; Web Bluetooth optional later with the same async interface.
   - JIMU API client: high-level commands (enumerate modules, read sensor, drive servo/motor, control lights, power down).
   - Device registry caches the discovered configuration (ports, module types, capabilities) and supports multiple modules active concurrently.
   - Shared `jimu` library (`jimu/jimu.js`) wraps BLE (`jimu/jimu_ble.js`), performs boot (info/probe/status/enable), maintains ping/battery polling, exposes module map/firmware ID, and offers abstractions for servos, motors, sensors, eyes, ID changes, and simple wheeled-drive helpers.
@@ -83,3 +83,57 @@
 - Unit tests: block generators, runtime scheduling, device command encoding/decoding, widget bindings.
 - Integration: simulated device to validate sequences for servos/motors/sensors and control-panel triggers.
 - Manual: connect to real JIMU via BLE, verify discovery, actuation, sensor read latency, control-panel run mode, and error handling.
+
+
+## Very old Jimu
+
+old firmware, uKit want to update this brick
+
+- using BT LTE (no ecryption?)
+bluetooth atrubute protocol?
+
+boot sequence
+> fbbf0636003ced
+< fbbf0c360053314a494d55fbed
+
+> Value: fbbf06010007ed
+< Value: fbbf0a014a494d553272ed
+
+> Value: fbbf0608000eed
+< Value: fbbf83084a696d755f62302e3035340000000000
+< Value: 0000000000000000000000040000000000000000
+< Value: 0000000000000000000000000000000000000000
+< Value: 0000000000000000000000000000000000000000
+< Value: 0000000000000000000000000000000000000000
+< Value: 0000000000000000000000000000000000000000
+< Value: 00000003000100010200e3ed
+
+> Value: fbbf0605000bed
+< Value: fbbf0605000bed
+
+> Value: fbbf0627002ded
+< Value: fbbf092700004c64e0ed
+
+> Value: fbbf062c0032ed
+< Value: fbbf122c00333131200f514d573900270057ed
+
+> Value: fbbf0627002ded
+< Value: fbbf092700004c64e0ed
+
+> Value: fbbf062b0738ed
+xxx
+
+> Value: fbbf0627002ded
+< Value: fbbf092700004c64e0ed
+
+> Value: fbbf06030009ed
+< Value: fbbf06030009ed
+
+> Value: fbbf06030009ed
+< Value: fbbf06030009ed
+
+> Value: fbbf0f900103ffc8ffff0020ffff86ed
+< Value: fbbf06900096ed
+
+> Value: fbbf0f9001030000ffff0000ffff9fed
+< 

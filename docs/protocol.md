@@ -27,7 +27,12 @@
   - Checksum byte: sum of bytes starting at the length byte (length + payload).
   - Terminator: `0xED`.
   - Example full packet (read servo position): `[0xFB, 0xBF, 0x07, 0x0B, 0x00, 0x00, 0x0B, 0xED]`.
-  - Generic ack pattern observed during scans: `fb bf 06 <cmd> 00 <checksum> ed` (echoes the command byte with a zero status and checksum).
+  - Generic ack pattern observed during scans: `fb bf 06 <cmd> 00 <checksum> ed` (echoes the command byte with a zero status and checksum). - means OK.
+  - If expected response should be `[<cmd> 00]`, but returs `[<cmd>, 0x01, <id>, 0x01]` -> means ERROR on device `<id>`.
+    This response if for motor or servo actions.
+    There should be cmd=`0x05` extra response emited with error details.
+
+
   - Sometimes single Notification can send multipre responses gulued together like: <fb bf 06 08 ee fc ed fb bf 06 08 ee fc ed>, this should be split to multiple responses, <fb ... ed> , <fb ... ed>
 - BLE layout (implicit):
   - Device discovered by advertised local name match.
@@ -85,10 +90,15 @@ Boot sequence (done by original app):
       * ultrasinic 1-8
       * something 0x05 1-5
 
--  ??? (`0x05`) - during init:
-    - `[0x05, 0x00]` query / init ??
-    - response hex: `[05 00]`  ??
-    - no idea what it is doing; omitting it shows no visible impact on devices we can test
+-  ERROR (`0x05`) - during init:
+    - send: `[0x05, 0x00]` query if ERROR
+    - response hex: `[05 00]`  -> OK no error
+    - response without query, after error command
+      example: motor 1 error:
+       `[0x05, 0x04 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00 00]`
+      propably 0x04 - type of error?
+      0x01 - bit position meaning MOTOR 1
+    - send: `[0x05, 0x01]` ??? don't know
 
 -  ??? (`0x72`) - TODO during init, sometimes present. Probably init some device
     - `[0x72 0x08, 0x01]` some query?
@@ -185,6 +195,11 @@ COMMANDS:
     - orginal app emit this every few seconds
     - no serial data.
 
+-  CLEAR_ERROR (`0x3c`) - not sure if correct
+    - send: `[0x03, 0x00]` 
+    - was send after error twice,
+    - no replay
+
 - Servo continous rotation (`0x07`):
     - Single servo: `[0x07, 0x01, servoId, direction(1|2), velocity_hi, velocity_lo]` (velocity is 16-bit; effective range observed up to ~1000).
     - Dual/axle (observed): 
@@ -192,13 +207,14 @@ COMMANDS:
           0x07, 02 01 02 00 00 00  <- stop?
           0x07, 02 01 02 02 01 07
           0x07, 02 01 02 01 01 cc
-      - to drive two servos together (differential style). 
+      - to drive two servos together - that same direction and speed. 
+      - can be usefull for 4 whell (pairs run that same)
     - Quad/pairs (observed): 
         `[0x07, 0x04, servoId1, servoId2, servoId3, servoId4, direction(0?|1|2), velocity_hi, velocity_lo]`
          0x07, 04 01 02 03 04 - 01 01 cc
          0x07, 04 01 02 03 04 - 02 01 cc
          0x07, 04 01 02 03 04 - 00 00 00	// ? stop
-      - Drives four servos at once
+      - Drives four servos at once  - that same direction and speed
 
     - other strange: ? 3 wheels - to check
         `[0x07, 0x03, servoId1, servoId2, servoId3, direction(0?|1|2), velocity_hi, velocity_lo]`
@@ -343,6 +359,7 @@ COMMANDS:
       response `[0x79, 0x06, 0x01, 0x00]`
 
   - Eye animation (`0x78`): `[0x78, 0x04, eyesMask, animationId, 0x00, repetitions, R, G, B]`.
+      - eyeMask: bitmask of eye IDs (0x01 = ID1, 0x02 = ID2, 0x03 = both, etc.).
       sniffed:  // Eye ID 1, diffrent animations
          0x78, 04 01 0c 0003000000
          0x78, 04 01 0f 0003000000
@@ -354,16 +371,48 @@ COMMANDS:
 - Misc test payload: `[0x06, 0x36, 0x00, 0x3C]`.
 
 - Motor rotation ('0x90'): TO check
-  - send: `[0x90, 0x01, 0x01, 0x00, 0x00, 0xff, 0xff]` // motor ID1 stop
-    resp: `[0x90, 0x00]`
-  - send: `[0x90, 0x01, 0x01, 0xff, 0x92, 0xff, 0xff]` // move motor ID1
-  - always send short response: `[0x90, 0x00]`
+  - send: `[0x90, 0x01, motor ID, speed HI, speed LO, time hi, time lo]` 
+        * motor ID 
+        * [speed HI,speed LO] 16-bit int. 
+            >0 rotate Clock wise, 
+            <0 rotate conter clock wise, 
+            0= stop,
+            max speed +/- 150, anything more not make it faster
+        * [time hi,time lo] 16 biy unsigned int / 10 = seconds of rotation
+          max time is 6 second (60). Anything more, is 6 second
+      resp: `[0x90, 0x00]` -> OK
+      resp: `[0x90, 0x01, 0x01, 0x01]` -> Error motor 01
+  - example: `[0x90, 0x01, 0x01, 0xff, 0x92, 0xff, 0xff]` // move motor ID1, ccw, 6 sec,
+    - response: `[0x90, 0x00]` -> OK
+    - error response: `[0x90, 0x01, 0x01, 0x01]` -> Error motor 01
+       means-> motor 01 error.
+       after notification ERROR 0x05 follows
 
+  - dual motor
+    - send: `[0x90, 0x01, <MotorID bit mask> , speed1 HI, speed1 LO, time1 hi, time1 lo, speed2 HI, speed2 LO, time2 hi, time2 lo]`
+        <MotorID bit mask> - 1 for ID1, 2 for ID2, ... , 3 for ID1+ID2, | 2 selected !
+        speed1 HI, speed1 LO, time1 hi, time1 lo - that same meaning as for single motor, (first motor)
+        speed2 HI, speed2 LO, time2 hi, time2 lo - that same meaning as for single motor, (second motor)
+        motor odrdered from lowes ID
+
+    - sniffed examples (motor ID1 and ID2)
+      `[0x90, 0x01, 0x03, 0xff, 0xfc, 0xff, 0xff, 0xff, 0xda, 0xff, 0xff]`
+      `[0x90, 0x01, 0x03, 0x00, 0x0a, 0xff, 0xff, 0x00, 0x31, 0xff, 0xff]`
 ---
   
--  set??? (`0x91`) - :
-    - `[0x91, 0x01, 0x01]` ???
-    - response hex: `[91 00]`  
+-  set??? (`0x91`) - don't know, variants | clear error?
+    - send`[0x91, 0x01, 0x01]` ??? | clear error?
+      - response hex: `[91 00]`  
+    - send: '`[0x91, 0x01, 0x03]` ???  | clear error?
+      - response hex: `[91 00]`  
+
+-  set??? (`0x92`) - don't know,  | clear error?
+    - send`[0x92, 0x00]` ???
+      - response hex: `[91 00]`  
+
+-  set??? (`0x3b`) - don't know,  | clear error?
+    - send`[0x3b, 0x00]` ???
+      - response hex: `[3b 00]`  
 
 ---
 -  Change ID (`0x74`) - change ID of IR, ultrasonic, :
@@ -391,7 +440,6 @@ COMMANDS:
   - UUIDs, MTU, and characteristic order are not fixed in the repo.
   - Touch/color/other sensors are untested (we only have servos, motors, IR, ultrasonic, speakers, segment eyes).
   - Speaker is a standard Bluetooth audio device; not controlled via these commands (only detected in 0x08/0x71 mask).
-  - The IR request example in the repo's markdown uses a different framing; likely stale. Confirm with captures.
   - Module addressing:
     - Modules have per-type IDs starting at 1 (servo 1, motor 1, eye 1, IR 1, ultrasonic 1, etc.). IDs are unique within a type; type + ID is the unique address. This matches the official wired Arduino library and is likely true over BLE; ensure BLE payloads carry the target module id.
 
@@ -405,20 +453,41 @@ COMMANDS:
 - Session setup:
   - Connect, set MTU if supported (try 247), subscribe to notifications.
   - Send a handshake/ping to confirm link.
-- Discovery:
-  - Query module map: returns list of ports with module type (servo, motor, sensor), id, and capabilities (positional vs continuous).
+- Boot sequence:
+  - cmd 0x36 -> board INFO
+  - cmd 0x01 -> start scan
+  - cmd 0x08 -> detect / list all detected modules (remember all detected modules)
+  - cmd 0x05 -> check for errors
+  - cmd 0x71 -> enable all detected modules (that need enable)
+  - cmd 0x27 -> check battery voltage and charging status
   - Cache module map for block toolboxes and validation.
+- servo angleDeg representation
+  - real range 0-240, rescale it to -120 to 120, with 0 as neutral (setServoPosition, GetSeroPosition)
 - Actuation (examples to design/verify):
-  - `setServoPosition(id, positionDeg, durationMs)`.
+  - `setServoPosition(id, angleDeg, durationMs)`.
   - `rotateServo(id, direction, speedPct)` and `powerDownServo(id)`.
   - `rotateMotor(id, direction, speedPct)` and `powerDownMotor(id)`.
+  - `eyeColor(id,R,G,B,duration)`
+  - `eyeColorSegment(id,[R,G,B],[R,G,B],[R,G,B],[R,G,B],[R,G,B],[R,G,B],[R,G,B],[R,G,B],duration)`
+  - `ultrasonicColor(id,R,G,B,duration)`
   - Control panel outputs: `setLed(id, color)` or `setIndicator(id, value)` if supported.
 - Sensors (examples):
   - `readUltrasonic(id) -> distance`.
-  - `readIR(id) -> distance/proximity`.
-  - `readTouch(id) -> boolean`.
-  - `readServoPosition(id) -> angle`.
-  - Control panel inputs: `readControl(id)`.
+  - `readIR(id) -> proximity/white level`.
+  - `readTouch(id) -> pressed, double pressed, long pressed`.
+  - `readServoPosition(id) -> angleDeg`.
+  - `readBattery() -> voltage`.
+  - `readBatteryCharge() -> bool`.
+  - Control panel inputs: 
+     - button - start code block
+     - switch - on/off - `readSwitch(id) -> bool`
+     - slider - readSlider(id) -> value, 
+     - joystick (2-way) `readJoystickX(id)` `readJoystickX(id)`, + code executed when changed
+     - timmer - start code block every X seconds.
+     - run - code block executed when model is started.
+  - Control panel hardware inputs:
+    - events: key pressed
+    - joystick data, sticks position and button pressed
 - Events:
   - Notifications for module changes, low battery, and possibly control panel widget changes.
 
@@ -439,7 +508,59 @@ COMMANDS:
 
 ## TODO after sniffing
 - Lock down service/characteristic UUIDs and confirm characteristic order.
-- Validate framing (length/checksum) against hardware and reconcile with any official patterns.
-- Record concrete command ids and payload shapes for: enumerate modules, servo set pos, servo rotate, motor rotate, power down, sensor read (IR/ultrasonic/touch), indicator set, control input read.
-- Define sensor response parsing (offsets, units) and eye/light masks.
 - Measure timing limits (min command spacing, notification rate) and update runtime throttling/backoff.
+- Define sensor response parsing (offsets, units) and eye/light masks.
+
+## BLE timing observations (Dec 2025)
+- Testing battery queries (0x27) in bursts of 30 frames: 25–50 ms gaps delivered 0 drops; 10 ms caused 10/30 missing responses; 5 ms caused 8/30 missing responses. Runtime writes should clamp to ~25 ms minimum for reliability; faster rates need retries/backoff.
+- Observed notification cadence over the sweep: p50 ≈ 60 ms, p95 ≈ 240 ms, max ≈ 1.38 s with occasional back-to-back frames (min 0). Plan for jitter and buffer draining rather than strict periodicity.
+- Error query (0x05, 0x00) returns `[05 00]` when no faults are present; not a fault condition.
+
+## Very old Jimu
+
+old firmware, uKit want to update this brick
+
+- using BT strange BT settings, not decoded in wireshark, but detected via probe
+bluetooth atrubute protocol?
+
+boot sequence
+> fbbf0636003ced
+< fbbf0c360053314a494d55fbed
+
+> Value: fbbf06010007ed
+< Value: fbbf0a014a494d553272ed
+
+> Value: fbbf0608000eed
+< Value: fbbf83084a696d755f62302e3035340000000000
+< Value: 0000000000000000000000040000000000000000
+< Value: 0000000000000000000000000000000000000000
+< Value: 0000000000000000000000000000000000000000
+< Value: 0000000000000000000000000000000000000000
+< Value: 0000000000000000000000000000000000000000
+< Value: 00000003000100010200e3ed
+
+> Value: fbbf0605000bed
+< Value: fbbf0605000bed
+
+> Value: fbbf0627002ded
+< Value: fbbf092700004c64e0ed
+
+> Value: fbbf062c0032ed
+< Value: fbbf122c00333131200f514d573900270057ed
+
+> Value: fbbf0627002ded
+< Value: fbbf092700004c64e0ed
+
+> Value: fbbf062b0738ed
+xxx
+
+> Value: fbbf0627002ded
+< Value: fbbf092700004c64e0ed
+
+> Value: fbbf06030009ed
+< Value: fbbf06030009ed
+
+> Value: fbbf06030009ed
+< Value: fbbf06030009ed
+
+

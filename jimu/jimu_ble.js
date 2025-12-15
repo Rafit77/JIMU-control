@@ -93,6 +93,7 @@ export class JimuBleClient extends EventEmitter {
     this.peripheral = null;
     this.writeCharacteristics = [];
     this.notifyCharacteristics = [];
+    this.lastLayout = null;
     this._disconnectHandler = null;
     this.parser = new FrameParser({
       onFrame: (data) => this.emit('frame', data),
@@ -156,12 +157,23 @@ export class JimuBleClient extends EventEmitter {
     const targetService = services.find((s) => s.uuid.replace(/-/g, '').startsWith(CUSTOM_PREFIX))?.uuid;
     const byService = (svc) => characteristics.filter((c) => (c._serviceUuid || '').replace(/-/g, '') === svc.replace(/-/g, ''));
     const scopedChars = targetService ? byService(targetService) : characteristics;
-
-    this.notifyCharacteristics = (scopedChars.length ? scopedChars : characteristics).filter((c) => c.properties.includes('notify'));
     const preferredWrites = [
       '49535343884143f4a8d4ecbe34729bb3',
       '49535343aca3481c91ecd85e28a60318',
     ];
+    const layout = {
+      services: services.map((s, idx) => ({ uuid: s.uuid, index: idx })),
+      characteristics: characteristics.map((c, idx) => ({
+        uuid: c.uuid,
+        index: idx,
+        serviceUuid: (c._serviceUuid || c._serviceId || '').replace(/-/g, '') || null,
+        properties: c.properties,
+      })),
+      preferredWriteUuids: [...preferredWrites],
+    };
+    layout.targetServiceUuid = targetService || null;
+
+    this.notifyCharacteristics = (scopedChars.length ? scopedChars : characteristics).filter((c) => c.properties.includes('notify'));
     this.writeCharacteristics = [];
     for (const u of preferredWrites) {
       const c = characteristics.find((x) => x.uuid === u);
@@ -183,6 +195,9 @@ export class JimuBleClient extends EventEmitter {
     if (!this.writeCharacteristics.length || !this.notifyCharacteristics.length) {
       throw new Error('Missing write/notify characteristics');
     }
+    layout.selectedNotifyUuids = this.notifyCharacteristics.map((c) => c.uuid);
+    layout.selectedWriteUuids = this.writeCharacteristics.map((c) => c.uuid);
+    this.lastLayout = layout;
 
     for (const nc of this.notifyCharacteristics) {
       try {
@@ -199,6 +214,7 @@ export class JimuBleClient extends EventEmitter {
       services: services.map((s) => s.uuid),
       notifyCount: this.notifyCharacteristics.length,
       writeCount: this.writeCharacteristics.length,
+      layout: this.getLayout(),
     });
   }
 
@@ -228,6 +244,10 @@ export class JimuBleClient extends EventEmitter {
     this.notifyCharacteristics = [];
     this.writeCharacteristics = [];
     this.parser.buffer = Buffer.alloc(0);
+  }
+
+  getLayout() {
+    return this.lastLayout;
   }
 
   async send(payload) {
