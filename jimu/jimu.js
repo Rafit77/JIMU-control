@@ -6,6 +6,10 @@ const clampByte = (v) => ((v % 256) + 256) % 256;
 const clampServoDeg = (deg) => Math.max(-120, Math.min(120, Math.round(deg ?? 0)));
 const servoDegToRaw = (deg) => clampByte(clampServoDeg(deg) + 120); // -120..120 => 0..240
 const servoRawToDeg = (raw) => Math.max(-120, Math.min(120, (raw ?? 120) - 120));
+const SENSOR_TYPE = {
+  IR: 0x01,
+  ULTRASONIC: 0x06,
+};
 const encodeMotorSpeed = (speed = 0) => {
   const clamped = Math.max(-150, Math.min(150, Math.round(speed)));
   const encoded = clamped < 0 ? 0x10000 + clamped : clamped;
@@ -35,6 +39,29 @@ const parseError05 = (payload = []) => {
   const type = payload[1] ?? 0x00;
   const maskBytes = payload.slice(2);
   return { type, maskBytes, raw: Array.from(payload) };
+};
+
+const parseSensors7e = (payload = []) => {
+  if (!payload?.length || payload[0] !== 0x7e) return null;
+  // Observed response structure:
+  //   [0x7E, 0x01, 0x01, <count>, [type, 0x00, id, valueHi, valueLo] x count]
+  // Value is a 16-bit BE integer; for Ultrasonic => value / 10 = cm (0 => out of range).
+  const count = payload[3] ?? 0;
+  const readings = [];
+  for (let i = 0; i < count; i += 1) {
+    const off = 4 + i * 5;
+    if (off + 5 > payload.length) break;
+    const type = payload[off];
+    const id = payload[off + 2];
+    const value = (payload[off + 3] << 8) | payload[off + 4];
+    readings.push({
+      type,
+      id,
+      value,
+      raw: Array.from(payload.slice(off, off + 5)),
+    });
+  }
+  return { count, readings, raw: Array.from(payload) };
 };
 
 const maskByteToIds = (byte = 0) => {
@@ -103,6 +130,7 @@ export class Jimu extends EventEmitter {
     pingIntervalMs = 5000,
     batteryIntervalMs = 30000,
     nameSubstring,
+    commandSpacingMs = 25,
   } = {}) {
     super();
     this.client = new JimuBleClient({ nameSubstring });
@@ -115,14 +143,19 @@ export class Jimu extends EventEmitter {
     };
     this.pingIntervalMs = pingIntervalMs;
     this.batteryIntervalMs = batteryIntervalMs;
+    this.commandSpacingMs = commandSpacingMs;
     this._pingTimer = null;
     this._batteryTimer = null;
+    this._sendQueue = Promise.resolve();
+    this._lastSendAt = 0;
     this._onFrame = this._onFrame.bind(this);
     this._onDisconnect = this._onDisconnect.bind(this);
+    this._onFrameError = this._onFrameError.bind(this);
   }
 
   async connect(target) {
     this.client.on('frame', this._onFrame);
+    this.client.on('frameError', this._onFrameError);
     this.client.on('disconnect', this._onDisconnect);
     await this.client.connect(target);
     this.state.connected = true;
@@ -136,6 +169,7 @@ export class Jimu extends EventEmitter {
     this.state.connected = false;
     await this.client.disconnect();
     this.client.removeListener('frame', this._onFrame);
+    this.client.removeListener('frameError', this._onFrameError);
     this.client.removeListener('disconnect', this._onDisconnect);
   }
 
@@ -143,6 +177,10 @@ export class Jimu extends EventEmitter {
     this._stopMaintenance();
     this.state.connected = false;
     this.emit('disconnect');
+  }
+
+  _onFrameError(err, ctx) {
+    this.emit('transportError', { message: err?.message || String(err), ctx: ctx || null });
   }
 
   _onFrame({ payload, cmd, meta }) {
@@ -170,7 +208,8 @@ export class Jimu extends EventEmitter {
       this.emit('battery', this.state.battery);
     }
     if (meta?.cmd === 0x7e) {
-      this.emit('sensor', payload);
+      const parsed = parseSensors7e(Array.from(payload));
+      this.emit('sensor', { parsed, payload, meta });
     }
     if (meta?.cmd === 0x03) {
       this.emit('ping', payload);
@@ -216,7 +255,16 @@ export class Jimu extends EventEmitter {
   }
 
   async _send(payload) {
-    return this.client.send(payload);
+    const run = async () => {
+      const now = Date.now();
+      const waitMs = Math.max(0, (this.commandSpacingMs ?? 0) - (now - this._lastSendAt));
+      if (waitMs) await sleep(waitMs);
+      const res = await this.client.send(payload);
+      this._lastSendAt = Date.now();
+      return res;
+    };
+    this._sendQueue = this._sendQueue.then(run, run);
+    return this._sendQueue;
   }
 
   // ----------------- Public API -----------------
@@ -354,16 +402,63 @@ export class Jimu extends EventEmitter {
   }
 
   async stopMotor(id) {
-    await this.rotateMotor(id, 0, 0);
+    await this.rotateMotor(id, 0, 1000);
   }
 
   // Sensors
-  async readIR(id = 1) {
-    await this._send([0x7e, 0x01, 0x01, clampByte(id)]);
+  async readIR(id = 1, { timeoutMs = 1200 } = {}) {
+    const targetId = clampByte(id);
+    const waiter = targetId ? this._makeSensorWaiter({ type: SENSOR_TYPE.IR, id: targetId, timeoutMs }) : null;
+    try {
+      await this._send([0x7e, 0x01, SENSOR_TYPE.IR, targetId]);
+    } catch (e) {
+      waiter?.cleanup?.();
+      throw e;
+    }
+    return waiter ? waiter.promise : null;
   }
 
-  async readUltrasonic(id = 1) {
-    await this._send([0x7e, 0x01, 0x06, clampByte(id)]);
+  async readUltrasonic(id = 1, { timeoutMs = 1200 } = {}) {
+    const targetId = clampByte(id);
+    const waiter = targetId ? this._makeSensorWaiter({ type: SENSOR_TYPE.ULTRASONIC, id: targetId, timeoutMs }) : null;
+    try {
+      await this._send([0x7e, 0x01, SENSOR_TYPE.ULTRASONIC, targetId]);
+    } catch (e) {
+      waiter?.cleanup?.();
+      throw e;
+    }
+    return waiter ? waiter.promise : null;
+  }
+
+  _makeSensorWaiter({ type, id, timeoutMs }) {
+    let cleanup = () => {};
+    const promise = new Promise((resolve, reject) => {
+      const onSensor = (evt) => {
+        const readings = evt?.parsed?.readings || [];
+        const match = readings.find((r) => r.type === type && r.id === id);
+        if (!match) return;
+        cleanup();
+        resolve(match);
+      };
+      const onDisconnect = () => {
+        cleanup();
+        reject(new Error('Disconnected while waiting for sensor'));
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error(`Timed out waiting for sensor type=0x${type.toString(16)} id=${id}`));
+      }, Math.max(100, timeoutMs ?? 1200));
+
+      cleanup = () => {
+        clearTimeout(timer);
+        this.removeListener('sensor', onSensor);
+        this.removeListener('disconnect', onDisconnect);
+      };
+
+      this.on('sensor', onSensor);
+      this.on('disconnect', onDisconnect);
+    });
+    return { promise, cleanup };
   }
 
   async readAllSensors(status = this.state.status08) {
@@ -416,6 +511,35 @@ export class Jimu extends EventEmitter {
 
   async fixSensorFromZero({ type = 0x01, toId = 0x02 } = {}) {
     await this.changePeripheralId({ type, fromId: 0x00, toId });
+  }
+
+  async emergencyStop({ refresh = false } = {}) {
+    const s = refresh ? await this.refreshStatus() : this.state.status08;
+    // Best effort: stop motors and rotations, then release servos by reading all positions.
+    const motorIds = s?.motors || [];
+    const servoIds = s?.servos || [];
+
+    for (const id of motorIds) {
+      try {
+        await this.stopMotor(id);
+        await sleep(40);
+      } catch (_) {
+        // ignore; continue best-effort stop
+      }
+    }
+    for (const id of servoIds) {
+      try {
+        await this.rotateServo(id, 0x01, 0);
+        await sleep(25);
+      } catch (_) {
+        // ignore
+      }
+    }
+    try {
+      await this.readServoPosition(0); // id=0 => read all; known to release servo hold
+    } catch (_) {
+      // ignore
+    }
   }
 }
 

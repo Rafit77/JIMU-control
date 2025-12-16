@@ -31,11 +31,12 @@ Servo units:
 - UI and SDK use degrees `-120..120` (`0` center).
 
 Stored per-servo settings (in memory, per project):
-- `project.servoConfig[id]`: `mode`, `min`, `max`, `maxSpeed`
+- `project.servoConfig[id]`: `mode`, `min`, `max`, `maxSpeed`, `dir`
 
 Positional (mode `servo` / `mixed`):
-- Min/Max and a position slider (bounded by min/max)
-- Test position
+- Touch-bar style slider `-120..120` with 3 draggable markers: `min`, `max`, and `test` (test is clamped to `[min,max]`)
+- Test position (shows selected angle)
+- Stop / release (runs `readServo` to release hold)
 - Save settings into the project
 
 Rotation (mode `motor` / `mixed`):
@@ -70,7 +71,7 @@ Closing/changing motor:
 
 ### IR / Ultrasonic sensor panels
 Clicking an IR/Ultrasonic sensor should open a live read panel:
-- Poll ~5Hz and show values
+- Poll ~5Hz and show values (single in-flight request; no overlapping polls)
 - Ultrasonic shown in cm (calibrated)
 
 ## Planned direction
@@ -80,4 +81,3 @@ Clicking an IR/Ultrasonic sensor should open a live read panel:
   - servo rotation speed limitation (model safety)
   - live sensor readouts with units/scaling
   - motor safety limits
-

@@ -47,6 +47,11 @@ const attachJimuEvents = () => {
   jimu.on('disconnect', () => sendToRenderer('jimu:disconnected'));
   jimu.on('servoPosition', (pos) => sendToRenderer('jimu:servoPos', pos));
   jimu.on('frame', (frame) => sendToRenderer('jimu:frame', frame));
+  jimu.on('sensor', (evt) => sendToRenderer('jimu:sensor', evt));
+  jimu.on('commandResult', (evt) => sendToRenderer('jimu:commandResult', evt));
+  jimu.on('deviceError', (evt) => sendToRenderer('jimu:deviceError', evt));
+  jimu.on('errorReport', (evt) => sendToRenderer('jimu:errorReport', evt));
+  jimu.on('transportError', (evt) => sendToRenderer('jimu:transportError', evt));
 };
 
 const registerIpc = () => {
@@ -75,14 +80,26 @@ const registerIpc = () => {
     return jimu.setEyeColor({ eyesMask: 0x01, time: 0xff, r: 0xff, g: 0x00, b: 0x00 });
   });
   ipcMain.handle('jimu:stop', async () => {
-    await jimu.disconnect();
+    await jimu.emergencyStop();
   });
   ipcMain.handle('jimu:centerServo', async (_evt, id) => {
     return jimu.setServoPositionDeg(id, 0, { speed: 0x14, tail: [0x00, 0x00] });
   });
   ipcMain.handle('jimu:readServo', async (_evt, id) => jimu.readServoPosition(id));
-  ipcMain.handle('jimu:readSensorIR', async (_evt, id) => jimu.readIR(id));
-  ipcMain.handle('jimu:readSensorUS', async (_evt, id) => jimu.readUltrasonic(id));
+  ipcMain.handle('jimu:readSensorIR', async (_evt, id) => {
+    try {
+      return await jimu.readIR(id);
+    } catch (e) {
+      return { error: true, message: e?.message || String(e) };
+    }
+  });
+  ipcMain.handle('jimu:readSensorUS', async (_evt, id) => {
+    try {
+      return await jimu.readUltrasonic(id);
+    } catch (e) {
+      return { error: true, message: e?.message || String(e) };
+    }
+  });
   ipcMain.handle('ui:setTitle', (_evt, title) => {
     if (winRef && !winRef.isDestroyed()) winRef.setTitle(title);
   });
@@ -93,6 +110,13 @@ const registerIpc = () => {
     const lim = Math.max(0, Math.min(maxSpeed, speed ?? 0));
     return jimu.rotateServo(id, dir, lim);
   });
+  ipcMain.handle('jimu:rotateMotor', async (_evt, { id, dir = 'cw', speed = 0, maxSpeed = 150, durationMs = 1000 }) => {
+    const lim = Math.max(0, Math.min(maxSpeed, Math.round(speed ?? 0)));
+    const signed = dir === 'ccw' ? -lim : lim;
+    return jimu.rotateMotor(id, signed, Math.max(0, Math.min(6000, Math.round(durationMs ?? 1000))));
+  });
+  ipcMain.handle('jimu:stopMotor', async (_evt, id) => jimu.stopMotor(id));
+  ipcMain.handle('jimu:emergencyStop', async () => jimu.emergencyStop());
 };
 
 const buildMenu = () => {
