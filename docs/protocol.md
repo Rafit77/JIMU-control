@@ -442,7 +442,8 @@ COMMANDS:
   - cmd 0x27 -> check battery voltage and charging status
   - Cache module map for block toolboxes and validation.
 - servo angleDeg representation
-  - real range 0-240, rescale it to -120 to 120, with 0 as neutral (setServoPosition, GetSeroPosition)
+  - on-wire raw range is typically 0..240; the app/SDK uses degrees in -120..120, with 0 as neutral (center)
+  - conversion: `deg = raw - 120`, `raw = deg + 120` (clamp to bounds)
 - Actuation (examples to design/verify):
   - `setServoPosition(id, angleDeg, durationMs)`.
   - `rotateServo(id, direction, speedPct)` and `powerDownServo(id)`.
@@ -455,7 +456,7 @@ COMMANDS:
   - `readUltrasonic(id) -> distance`.
   - `readIR(id) -> proximity/white level`.
   - `readTouch(id) -> pressed, double pressed, long pressed`.
-  - `readServoPosition(id) -> angleDeg`.
+  - `readServoPosition(id) -> { id, raw, deg }` (and the SDK emits `servoPosition` events in the same units).
   - `readBattery() -> voltage`.
   - `readBatteryCharge() -> bool`.
   - Control panel inputs: 
@@ -499,4 +500,3 @@ COMMANDS:
   - Stable at 50–200 ms gaps (0 drops). At 25 ms gaps: IR dropped 4/30, US dropped 3/30, servo dropped 1/30. At 10 ms gaps: IR dropped 12/30, US dropped 13/30, servo dropped 10/30.
   - Latency: for 50–100 ms gaps p50 ~70–90 ms; at 25 ms gaps p50 ~270–320 ms (p95 ~440–500 ms); at 10 ms gaps p50 ~300–330 ms (p95 ~575–603 ms).
   - Ultrasonic sometimes emitted extra notifications (e.g., 46/30 at 200 ms gap), so correlate by command byte, not just counts.
-

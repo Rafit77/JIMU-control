@@ -3,6 +3,9 @@ import { JimuBleClient } from './jimu_ble.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const clampByte = (v) => ((v % 256) + 256) % 256;
+const clampServoDeg = (deg) => Math.max(-120, Math.min(120, Math.round(deg ?? 0)));
+const servoDegToRaw = (deg) => clampByte(clampServoDeg(deg) + 120); // -120..120 => 0..240
+const servoRawToDeg = (raw) => Math.max(-120, Math.min(120, (raw ?? 120) - 120));
 const encodeMotorSpeed = (speed = 0) => {
   const clamped = Math.max(-150, Math.min(150, Math.round(speed)));
   const encoded = clamped < 0 ? 0x10000 + clamped : clamped;
@@ -172,6 +175,11 @@ export class Jimu extends EventEmitter {
     if (meta?.cmd === 0x03) {
       this.emit('ping', payload);
     }
+    if (meta?.cmd === 0x0b && payload?.length >= 3) {
+      const id = payload[1] ?? 0;
+      const raw = payload[payload.length - 1] ?? 120;
+      this.emit('servoPosition', { id, raw, deg: servoRawToDeg(raw), meta });
+    }
     this.emit('frame', { payload, cmd, meta });
   }
 
@@ -262,6 +270,15 @@ export class Jimu extends EventEmitter {
     await this._send(payload);
   }
 
+  async setServoPositionDeg(id, deg, { speed = 0x14, tail = [0x00, 0x00] } = {}) {
+    return this.setServoPositions({ ids: [id], positions: [servoDegToRaw(deg)], speed, tail });
+  }
+
+  async setServoPositionsDeg({ ids = [], degrees = [], speed = 0x14, tail = [0x00, 0x00] } = {}) {
+    const positions = degrees.slice(0, ids.length).map(servoDegToRaw);
+    return this.setServoPositions({ ids, positions, speed, tail });
+  }
+
   async rotateServo(id, direction, velocity) {
     const vel = Math.max(0, Math.min(0xffff, velocity || 0));
     const hi = (vel >> 8) & 0xff;
@@ -269,9 +286,39 @@ export class Jimu extends EventEmitter {
     await this._send([0x07, 0x01, id, direction, hi, lo]);
   }
 
-  async readServoPosition(id = 0) {
-    // id=0 => all
-    await this._send([0x0b, clampByte(id), 0x00]);
+  async readServoPosition(id = 0, { timeoutMs = 1200 } = {}) {
+    // id=0 => all (no awaited result)
+    const targetId = clampByte(id);
+    const pending = targetId ? this._waitForServoPosition(targetId, timeoutMs) : null;
+    await this._send([0x0b, targetId, 0x00]);
+    return pending ? pending : null;
+  }
+
+  _waitForServoPosition(id, timeoutMs) {
+    return new Promise((resolve, reject) => {
+      const onPos = (data) => {
+        if (data?.id !== id) return;
+        cleanup();
+        resolve(data);
+      };
+      const onDisconnect = () => {
+        cleanup();
+        reject(new Error('Disconnected while waiting for servo position'));
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error(`Timed out waiting for servo ${id} position`));
+      }, Math.max(100, timeoutMs ?? 1200));
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.removeListener('servoPosition', onPos);
+        this.removeListener('disconnect', onDisconnect);
+      };
+
+      this.on('servoPosition', onPos);
+      this.on('disconnect', onDisconnect);
+    });
   }
 
   async changeServoId(fromId, toId) {

@@ -45,14 +45,8 @@ const attachJimuEvents = () => {
   jimu.on('status', (status) => sendToRenderer('jimu:status', status));
   jimu.on('battery', (battery) => sendToRenderer('jimu:battery', battery));
   jimu.on('disconnect', () => sendToRenderer('jimu:disconnected'));
-  jimu.on('frame', (frame) => {
-    sendToRenderer('jimu:frame', frame);
-    if (frame?.meta?.cmd === 0x0b && frame?.payload?.length >= 2) {
-      const raw = frame.payload[frame.payload.length - 1];
-      const id = frame.payload[1] || 0;
-      sendToRenderer('jimu:servoPos', { id, raw, deg: raw - 120 });
-    }
-  });
+  jimu.on('servoPosition', (pos) => sendToRenderer('jimu:servoPos', pos));
+  jimu.on('frame', (frame) => sendToRenderer('jimu:frame', frame));
 };
 
 const registerIpc = () => {
@@ -84,7 +78,7 @@ const registerIpc = () => {
     await jimu.disconnect();
   });
   ipcMain.handle('jimu:centerServo', async (_evt, id) => {
-    return jimu.setServoPositions({ ids: [id], positions: [120], speed: 0x14, tail: [0x00, 0x00] });
+    return jimu.setServoPositionDeg(id, 0, { speed: 0x14, tail: [0x00, 0x00] });
   });
   ipcMain.handle('jimu:readServo', async (_evt, id) => jimu.readServoPosition(id));
   ipcMain.handle('jimu:readSensorIR', async (_evt, id) => jimu.readIR(id));
@@ -93,8 +87,7 @@ const registerIpc = () => {
     if (winRef && !winRef.isDestroyed()) winRef.setTitle(title);
   });
   ipcMain.handle('jimu:setServoPos', async (_evt, { id, posDeg, speed }) => {
-    const raw = Math.max(0, Math.min(240, Math.round((posDeg ?? 0) + 120)));
-    return jimu.setServoPositions({ ids: [id], positions: [raw], speed: speed ?? 0x14, tail: [0x00, 0x00] });
+    return jimu.setServoPositionDeg(id, posDeg ?? 0, { speed: speed ?? 0x14, tail: [0x00, 0x00] });
   });
   ipcMain.handle('jimu:rotateServo', async (_evt, { id, dir, speed, maxSpeed = 1000 }) => {
     const lim = Math.max(0, Math.min(maxSpeed, speed ?? 0));
