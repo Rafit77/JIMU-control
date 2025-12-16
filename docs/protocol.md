@@ -3,6 +3,14 @@
 > Note: UBTECH has not published an official public spec for JIMU BLE. The following is a working hypothesis to guide implementation and reverse-engineering. All packet formats and UUIDs must be verified against real hardware.
 > inspiration: https://github.com/msantang78/node-jimu/blob/master/PROTOCOL.md
 
+## Quick status (what’s known vs missing)
+- Framing/acks: `FB BF <len> ... checksum ED`, ack pattern `fb bf 06 <cmd> 00 <chk> ed`; error pattern `fb bf 06 <cmd> 01 <id> 01` with follow-up 0x05 error report.
+- Working commands: init (0x36, 0x01, 0x08), enable (0x71), battery (0x27), ping (0x03), servo set/read (0x07/0x09/0x0B), motor (0x90 single/dual), sensor read (0x7E), ID changes (0x74/0x0C), eye LEDs (0x78/0x79), error query (0x05).
+- Timing: reliable writes at ~25–50 ms spacing; 10 ms/5 ms produced drops. Notifications typically ~60 ms apart with jitter to ~1.3 s.
+- BLE layout: custom service starting with `49535343`; characteristic order not locked (notify/write selection heuristics in code). Needs on-device UUID confirmation.
+- Missing/needs check: service/characteristic UUIDs and order; meaning of 0x72, 0x2b, 0x2c, 0x3b, 0x91, 0x92; speaker control path; sensor value scales/units; eye segment masks; MTU limits; multi-frame notification splitting rules.
+- Redundant/raw sections below are kept for now—tagged “(review/remove?)” where they look like unprocessed captures or duplicated notes.
+
 ## Plan to confirm protocol
 - Use a BLE sniffer (nRF Sniffer or similar) or the nRF Connect app to inspect services/characteristics after pairing with the official JIMU app. => not working, and can't work. BT transmision is ENCRYPTED!
 - Log traffic when orginal app is connecting and preparing JIMU brick, make every posible action in device to generate most commands to detect them all. 
@@ -19,7 +27,7 @@
   - create disected for this data (to analise)
 - create serial sniffer to check what is sending to devices by central unit with simulated BT commands.
 
-## Findings from `msantang78/node-jimu` and real sniffing (verification in progess)
+## Findings from `msantang78/node-jimu` and real sniffing (raw notes; needs cleanup/verification)
 - Packet framing:
   - Header bytes: `0xFB, 0xBF`.
   - Length byte: `payload.length + 4` (length + payload + checksum in builder logic).
@@ -31,8 +39,6 @@
   - If expected response should be `[<cmd> 00]`, but returs `[<cmd>, 0x01, <id>, 0x01]` -> means ERROR on device `<id>`.
     This response if for motor or servo actions.
     There should be cmd=`0x05` extra response emited with error details.
-
-
   - Sometimes single Notification can send multipre responses gulued together like: <fb bf 06 08 ee fc ed fb bf 06 08 ee fc ed>, this should be split to multiple responses, <fb ... ed> , <fb ... ed>
 - BLE layout (implicit):
   - Device discovered by advertised local name match.
@@ -49,7 +55,7 @@ Boot sequence (done by original app):
 - Probe brick devices (`0x01`):
     - `[0x01, 0x00]` query brick info, brick start probing all devices
     - response hex:   `[01 00 4a 49 4d 55 32 50]`   (\00JIMU2 P)
-    - what brick probes: (new brick JIMU2)
+    - what brick probes - scan on serial interface: (new brick JIMU2)
       * SERVOS 1-32
       * IR 1-8
       * something 0x07 1-8 (serial frame: Raw Frame: f77f 06 07 01 0eed)
@@ -80,38 +86,24 @@ Boot sequence (done by original app):
     - example response hex: `[08 4a 69 6d 75 5f 70 31 2e 37 39 4f 00 00 04 00 00 00 00 00 41 16 51 01 00 00 00 00 04 01 00 0f 10 0c 14 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 02 a1 10 30 10 00 00 00 00 000 00 00 01 00 0b 12 05 0a 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]` (Jimu_p 1.790 + lot extras?)
     - example, old system hex: `[08 4a 69 6d 75 5f 62 30 2e 32 36 51 00 01 00 00 00 00 00 00 41 16 51 01 00 00 00 00 04 01 00 0f 10 0c 14 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 03 00 2a 11 03 01 00 00 00 00 00 00 00 00 01 00 0b 12 05 0a 00 00 00 00 00 00 00 00 01 00 01 11 03 14 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 01 00 01 06 00 00 00 00 00 00 00 00]` (Jimu_b0.26Q)
 
-    - serial (old brick probe here)
+    - probe on serial (old brick probe here)
       * servo 1-32
       * eye 1-8
       * ir 1-8
       * something 0x07 1-8 (frame: e88e)
-      * MOTORS 0x07 1-8 (frame: e99e) - MOTORS!, 1 response when motor connected ID=1, frame Raw Frame: e99e0607010eed)
+      * MOTORS 0x07 1-8 (frame: e99e)
       * something 0x07 1-8 (frame: f77f)
       * ultrasinic 1-8
       * something 0x05 1-5
 
--  ERROR (`0x05`) - during init:
-    - send: `[0x05, 0x00]` query if ERROR
-    - response hex: `[05 00]`  -> OK no error
-    - response without query, after error command
-      example: motor 1 error:
-       `[0x05, 0x04 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00 00]`
-      propably 0x04 - type of error?
-      0x01 - bit position meaning MOTOR 1
-    - send: `[0x05, 0x01]` ??? don't know
+### Unknown/unclear commands (needs verification)
+-  ERROR (`0x05`):
+    - `[0x05, 0x00]` query returns `[05 00]` when no faults. 
+    - `[0x05, 0x01]` meaning unknown.
+    - Error responses (e.g., motor error) appear as `[0x05, 0x0400000000000000000000000000000000000000000000000100000000]` with bitmasks; need mapping for error types/bits. This example means motor ID1 error.
 
--  ??? (`0x72`) - TODO during init, sometimes present. Probably init some device
-    - `[0x72 0x08, 0x01]` some query?
-    - response hex: `[72 08 00 01 88 1b 99 14 e3 c2 4a 69 6d 75 73 70 6b 5f 45 33 43 32]`  (....Jumuspk_E3C2)
-    - omitting it has no visible impact on the hardware we can test
-    - send to serial interface (sniffed):
-        fb03 08 06ff 00060001000022
-        fb03 08 06ff 00060001000022
-        e99e 06 0401 0bed
-        e99e 06 0401 0bed
-        e99e 06 0401 0bed
-
-
+-  ??? (`0x72`):
+    - Seen during init. `[0x72 0x08, 0x01]` query? Response `[72 08 00 01 88 1b 99 14 e3 c2 4a 69 6d 75 73 70 6b 5f 45 33 43 32]`. Omitting had no visible effect. Serial frames shown below (review/remove if redundant).
 -  ENABLE (`0x71`) - during init many times, exec with diffrent paramaters. 
     Prepare sensors, speakers and eyes for use.
     Need to be executed for every detected device group from IR, EYE, Ultrasonic. Speaker
@@ -126,29 +118,14 @@ Boot sequence (done by original app):
           0x07 - ??? to test?          
           0x08 - Speaker (to check)          
         <bit ID> is: mask, a bit for every device present. Low bit = ID1 bits: [ID8,...ID1]]
-    Sniff:
-    - first send:  `[0x71, 0x04, 0x03, 0x00]` // eye config?
+    Sniff , examples:
+    - Eye enable send:  `[0x71, 0x04, 0x03, 0x00]` // eye config ID1 and ID2
       - response   `[0x71, 0x04, 0x03, 0x00]`
-      - serial data:
-          fb030806ff00060001000022  // ??
-          fb030806ff00060001000022  // ??
-          f44f06020109ed   // eye ID1 cmd: 0x02
-          f44f0602020aed   // eye ID1 cmd: 0x02
-
-    - second send: `[0x71, 0x01, 0x01, 0x00]` // IR config?
+    - IR enable send: `[0x71, 0x01, 0x01, 0x00]` // IR config ID1
       - response   `[0x71, 0x01, 0x01, 0x00]`
-      - serial data:
-          fb030806ff00060001000022  // ??
-          fb030806ff00060001000022  // ??
-          f88f06020109ed   // IR ID1 cmd 0x02
-    - thrid send:  `[0x71, 0x06, 0x01, 0x00]` ?? // when ultrasonic, ultrasonic config?
+    - Ultrasonic enalbe send:  `[0x71, 0x06, 0x01, 0x00]` ?? // when ultrasonic, ultrasonic config, ID1
       - response   `[0x71, 0x06, 0x01, 0x00]`
-      - serial data:
-          fb030806ff00060001000022 // ??
-          fb030806ff00060001000022 // ??
-          f55f06020109ed  // Ultrasonic ID1 Cmd 0x02
-    - other, speaker?
-      - first send:  `[0x71, 0x08, 0x01, 0x00]`
+    - speaker enable ID1 send:  `[0x71, 0x08, 0x01, 0x00]`
           response   `[0x71, 0x08, 0x01, 0x00]`
 
 
@@ -162,7 +139,7 @@ Boot sequence (done by original app):
                     `[27 00 00 50 4b]`
                     `[27 00 00 4f 41]` <- dirdent setup?>
                     `[0x27 0x01 0x00 0x53 0x5e]` -  charging
-    - no serial data.
+
 
 -  query??? (`0x2c`) - during init: brick?
     - `[0x2c, 0x00]` query / set ??
@@ -225,6 +202,7 @@ COMMANDS:
 
     - Rotation timeout: any rotation command expires after ~6 seconds unless refreshed; resend to keep spinning.
     - ACK/notify example after rotation: `fb bf 06 07 00 0d ed`. (cmd: 07 00)
+    - Blocking servo ID1 during continuous rotation did **not** produce a 0x05 error report; observed responses included short acks (`0700`). Unplugging the servo produced a longer frame `07 01 00 00 00 01` (meaning unknown, likely “servo missing”).
 
 - Servo positions (`0x09`): selector + can move multiple servos at once.
   - Payload (tested): `[0x09, sel32_25, sel24_17, sel16_9, sel8_1, s1, s2, s3, s..., speed, 0, 0]`.
@@ -235,16 +213,10 @@ COMMANDS:
   - last two bytes remain unknown; `[0x01,0x90]` seen in sniffing, `[0x00,0x00]` also works, no visible impact in current tests
   - Observed notification/response after `0x09` write: `cmd=0x09`, params `0x00` (len=1) appears to be an OK/ack for the command.
 
-  - sniffed other variant:
-      [0x09, 00 00 00 0f 20 78 78 78 14 01 90]
-      Data: 0000000f 20 78 78 78 14 0190
-      Data: 0000000f 20 78 78 78 14 0190
-      Data: 00000001 78 14 0190
-      Data: 00000001 11 05 0064
-      Data: 00000001 02 05 0064
-      Data: 00000001 45 05 0064
-      Data: 0000000f 20 78 78 78 14 0190
-
+  - sniffed example :
+      `[0x09, 00 00 00 0f 20 78 78 78 14 01 90]`
+      `[0x09, 00 00 00 01 11 05 00 64]`
+  - Error/absent servo: unplugging servo ID1 produced `09 01 00 00 00 01` (len=6) when commanding position; normal acks were `09 00`.
 
 - Read servo position (`0x0B`):
   - Single read: `[0x0B, servoId, 00]` returns frame: 01 aa 00 00 00 <angle>
@@ -306,6 +278,7 @@ COMMANDS:
     - resposne:  7E 01 01 01 06 00 01 05 c7
     -  variants  7E 01 01 01 06 00 01 05 c9
                  7E 01 01 01 06 00 01 00 59
+  - Absent sensor behavior: unplugging IR1 or US1 still returned short frames (`7e0101010101000000` and `7e0101010601000000` respectively); no distinct error code observed.
 
 
 
@@ -335,21 +308,8 @@ COMMANDS:
 
       sniffed multicolor  Eye ID=1, select color for every led:
         `[0x79, 0x04, 0x01, 0x02, 0x07, 0x05, 0xff, 0xf0, 0x00, 0x02, 0xff, 0x80, 0x00, 0x08, 0x00, 0xff, 0x00, 0x10, 0x00, 0xff, 0xff, 0x20, 0x00, 0x00, 0xff, 0x40, 0xff, 0x00, 0xff, 0x80, 0xff, 0xff, 0xff]`
-        `[0x79, 0x04, 0x01, 0x02, 0x07, 0x01, 0xff, 0xf0, 0x00, 0x02, 0xff, 0x80, 0x00, 0x24, 0x00, 0x00, 0xff, 0x08, 0x00, 0xff, 0x00, 0x10, 0x00, 0xff, 0xff, 0x40, 0xff, 0x00, 0xff, 0x80, 0xff, 0xff, 0xff]`
-        `[0x79, 0x04, 0x01, 0x02, 0x06, 0x01, 0xff, 0xf0, 0x00, 0x02, 0xff, 0x80, 0x00, 0x34, 0x00, 0x00, 0xff, 0x08, 0x00, 0xff, 0x00, 0x40, 0xff, 0x00, 0xff, 0x80, 0xff, 0xff, 0xff]`
-        `[0x79, 0x04, 0x01, 0x02, 0x06, 0x01, 0xff, 0xf0, 0x00, 0x02, 0xff, 0x80, 0x00, 0x24, 0x00, 0x00, 0xff, 0x08, 0x00, 0xff, 0x00, 0x50, 0xff, 0x00, 0xff, 0x80, 0xff, 0xff, 0xff]`
-        `[0x79, 0x04, 0x01, 0x02, 0x06, 0x01, 0xff, 0xf0, 0x00, 0x02, 0xff, 0x80, 0x00, 0x24, 0x00, 0x00, 0xff, 0x08, 0x00, 0xff, 0x00, 0x90, 0xff, 0xff, 0xff, 0x40, 0xff, 0x00, 0xff]`
-        `[0x79, 0x04, 0x01, 0x02, 0x05, 0x01, 0xff, 0xf0, 0x00, 0x92, 0xff, 0xff, 0xff, 0x24, 0x00, 0x00, 0xff, 0x08, 0x00, 0xff, 0x00, 0x40, 0xff, 0x00, 0xff]`
-        `[0x79, 0x04, 0x01, 0x02, 0x05, 0x01, 0xff, 0xf0, 0x00, 0x42, 0xff, 0x00, 0xff, 0x24, 0x00, 0x00, 0xff, 0x08, 0x00, 0xff, 0x00, 0x90, 0xff, 0xff, 0xff]`
-        `[0x79, 0x04, 0x01, 0x02, 0x05, 0x01, 0xff, 0xf0, 0x00, 0xc2, 0xff, 0x00, 0xff, 0x24, 0x00, 0x00, 0xff, 0x08, 0x00, 0xff, 0x00, 0x10, 0xff, 0xff, 0xff]`
-        `[0x79, 0x04, 0x01, 0x02, 0x05, 0x05, 0xff, 0xf0, 0x00, 0xc2, 0xff, 0x00, 0xff, 0x08, 0x00, 0xff, 0x00, 0x10, 0xff, 0xff, 0xff, 0x20, 0x00, 0x00, 0xff]`
-        `[0x79, 0x04, 0x01, 0x02, 0x04, 0xc3, 0xff, 0x00, 0xff, 0x24, 0x00, 0x00, 0xff, 0x08, 0x00, 0xff, 0x00, 0x10, 0xff, 0xff, 0xff]`
-        `[0x79, 0x04, 0x01, 0x02, 0x04, 0x25, 0xff, 0xf0, 0x00, 0xc2, 0xff, 0x00, 0xff, 0x08, 0x00, 0xff, 0x00, 0x10, 0xff, 0xff, 0xff]`
-        `[0x79, 0x04, 0x01, 0x02, 0x04, 0xa5, 0xff, 0xf0, 0x00, 0x42, 0xff, 0x00, 0xff, 0x08, 0x00, 0xff, 0x00, 0x10, 0xff, 0xff, 0xff]`
         `[0x79, 0x04, 0x01, 0x02, 0x04, 0xa5, 0xff, 0xf0, 0x00, 0x42, 0xff, 0x00, 0xff, 0x08, 0x00, 0x00, 0xff, 0x10, 0xff, 0xff, 0xff]`
         `[0x79, 0x04, 0x01, 0x02, 0x03, 0xad, 0xff, 0xf0, 0x00, 0x42, 0xff, 0x00, 0xff, 0x10, 0xff, 0xff, 0xff]`
-        `[0x79, 0x04, 0x01, 0x02, 0x03, 0xa5, 0xff, 0xf0, 0x00, 0x42, 0xff, 0x00, 0xff, 0x18, 0x00, 0x00, 0xff]`
-
   
     - Ultrasonic eye: (type = 0x06)
       `[0x79, 06 01 ff 00 00 01 00 ff ff]` (red)
@@ -360,6 +320,25 @@ COMMANDS:
 
   - Eye animation (`0x78`): `[0x78, 0x04, eyesMask, animationId, 0x00, repetitions, R, G, B]`.
       - eyeMask: bitmask of eye IDs (0x01 = ID1, 0x02 = ID2, 0x03 = both, etc.).
+      - animationId:
+         * 0 - white blink full
+         * 1 - white line blink
+         * 2 - white up to half blink
+         * 3 - white up shake
+         * 4 - white midle to up move
+         * 5 - white rotate clock wise
+         * 6 - white down blinl
+         * 7 - whute line to full blink
+         * 8 - dim in / out full
+         * 9 - fast blink
+         * 10 - fast fan
+         * 11 - low whiper
+         * 12 - rainbow fan
+         * 13 - rainbow blinking
+         * 14 - full red/green/blue
+         * 15 - rainbow building
+      - Color bytes matter: R/G/B change the visible color for these animations (tested with eye ID1). `0,0,0` renders as the same white baseline as `255,255,255`; non-zero single channels do change hue (e.g., `255,0,0` = red).
+      - Error acks: when the eye is connected, responses to 0x78 are short acks `78 04 01 00`; when the eye is unplugged, they return `78 04 01 01` (status=0x04, deviceId=1, detail=1). A 0x71 enable on the eye also yields `71 04 01 00` when present.
       sniffed:  // Eye ID 1, diffrent animations
          0x78, 04 01 0c 0003000000
          0x78, 04 01 0f 0003000000
@@ -398,8 +377,9 @@ COMMANDS:
     - sniffed examples (motor ID1 and ID2)
       `[0x90, 0x01, 0x03, 0xff, 0xfc, 0xff, 0xff, 0xff, 0xda, 0xff, 0xff]`
       `[0x90, 0x01, 0x03, 0x00, 0x0a, 0xff, 0xff, 0x00, 0x31, 0xff, 0xff]`
+  - Error/absent motor: unplugged motor ID1 returned `90 01 01 01` (status=0x01, deviceId=1, detail=1) instead of `90 00`.
 ---
-  
+
 -  set??? (`0x91`) - don't know, variants | clear error?
     - send`[0x91, 0x01, 0x01]` ??? | clear error?
       - response hex: `[91 00]`  
@@ -515,52 +495,8 @@ COMMANDS:
 - Testing battery queries (0x27) in bursts of 30 frames: 25–50 ms gaps delivered 0 drops; 10 ms caused 10/30 missing responses; 5 ms caused 8/30 missing responses. Runtime writes should clamp to ~25 ms minimum for reliability; faster rates need retries/backoff.
 - Observed notification cadence over the sweep: p50 ≈ 60 ms, p95 ≈ 240 ms, max ≈ 1.38 s with occasional back-to-back frames (min 0). Plan for jitter and buffer draining rather than strict periodicity.
 - Error query (0x05, 0x00) returns `[05 00]` when no faults are present; not a fault condition.
-
-## Very old Jimu
-
-old firmware, uKit want to update this brick
-
-- using BT strange BT settings, not decoded in wireshark, but detected via probe
-bluetooth atrubute protocol?
-
-boot sequence
-> fbbf0636003ced
-< fbbf0c360053314a494d55fbed
-
-> Value: fbbf06010007ed
-< Value: fbbf0a014a494d553272ed
-
-> Value: fbbf0608000eed
-< Value: fbbf83084a696d755f62302e3035340000000000
-< Value: 0000000000000000000000040000000000000000
-< Value: 0000000000000000000000000000000000000000
-< Value: 0000000000000000000000000000000000000000
-< Value: 0000000000000000000000000000000000000000
-< Value: 0000000000000000000000000000000000000000
-< Value: 00000003000100010200e3ed
-
-> Value: fbbf0605000bed
-< Value: fbbf0605000bed
-
-> Value: fbbf0627002ded
-< Value: fbbf092700004c64e0ed
-
-> Value: fbbf062c0032ed
-< Value: fbbf122c00333131200f514d573900270057ed
-
-> Value: fbbf0627002ded
-< Value: fbbf092700004c64e0ed
-
-> Value: fbbf062b0738ed
-xxx
-
-> Value: fbbf0627002ded
-< Value: fbbf092700004c64e0ed
-
-> Value: fbbf06030009ed
-< Value: fbbf06030009ed
-
-> Value: fbbf06030009ed
-< Value: fbbf06030009ed
-
+- Sensor read timing (IR/US/servo position ID1; bursts of 30 per gap):
+  - Stable at 50–200 ms gaps (0 drops). At 25 ms gaps: IR dropped 4/30, US dropped 3/30, servo dropped 1/30. At 10 ms gaps: IR dropped 12/30, US dropped 13/30, servo dropped 10/30.
+  - Latency: for 50–100 ms gaps p50 ~70–90 ms; at 25 ms gaps p50 ~270–320 ms (p95 ~440–500 ms); at 10 ms gaps p50 ~300–330 ms (p95 ~575–603 ms).
+  - Ultrasonic sometimes emitted extra notifications (e.g., 46/30 at 200 ms gap), so correlate by command byte, not just counts.
 
