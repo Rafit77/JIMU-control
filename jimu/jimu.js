@@ -20,6 +20,29 @@ const encodeMotorDuration = (ms = 6000) => {
   const ticks = Math.round(capped / 10); // protocol uses 0.1s units, max ~6s
   return { ticks, hi: (ticks >> 8) & 0xff, lo: ticks & 0xff };
 };
+const rgbToHsv255 = (r, g, b) => {
+  const rr = clampByte(r) / 255;
+  const gg = clampByte(g) / 255;
+  const bb = clampByte(b) / 255;
+  const max = Math.max(rr, gg, bb);
+  const min = Math.min(rr, gg, bb);
+  const delta = max - min;
+  let h = 0;
+  if (delta !== 0) {
+    if (max === rr) h = ((gg - bb) / delta) % 6;
+    else if (max === gg) h = (bb - rr) / delta + 2;
+    else h = (rr - gg) / delta + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  const s = max === 0 ? 0 : delta / max;
+  const v = max;
+  return {
+    h: clampByte(Math.round((h / 360) * 255)),
+    s: clampByte(Math.round(s * 255)),
+    v: clampByte(Math.round(v * 255)),
+  };
+};
 const parseAckLike = (payload = []) => {
   if (!payload?.length || payload.length > 4) return null;
   const [cmd, status, maybeId, maybeDetail] = payload;
@@ -586,14 +609,15 @@ export class Jimu extends EventEmitter {
   }
 
   // Ultrasonic LED (experimental)
-  async setUltrasonicLed({ id = 1, time = 0xff, r = 0xff, g = 0x00, b = 0x00 } = {}) {
-    // Sniffed "off": 79 06 <id> 00 00 00 00 00 00 00
-    // "On" appears to include 3 control bytes before RGB.
-    await this._send([0x79, 0x06, clampByte(id), clampByte(time), 0x00, 0x00, 0x01, clampByte(r), clampByte(g), clampByte(b)]);
+  async setUltrasonicLed({ id = 1, r = 0xff, g = 0x00, b = 0x00 } = {}) {
+    // Per docs/protocol.md:
+    //   79 06 <id> <r> <g> <b> <level> 00 ff ff
+    // level: 0=off, 1=bright, 2+=dim; we always use 1 and allow "off" by sending 0,0,0.
+    await this._send([0x79, 0x06, clampByte(id), clampByte(r), clampByte(g), clampByte(b), 0x01, 0x00, 0xff, 0xff]);
   }
 
   async setUltrasonicLedOff(id = 1) {
-    await this._send([0x79, 0x06, clampByte(id), 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+    await this.setUltrasonicLed({ id, r: 0x00, g: 0x00, b: 0x00 });
   }
 
   async setEyeSegments({ eyesMask = 0x01, time = 0xff, entries = [] } = {}) {

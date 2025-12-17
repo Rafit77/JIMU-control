@@ -96,10 +96,9 @@ const registerIpc = () => {
   ipcMain.handle('jimu:setEyeOff', async (_evt, { eyesMask = 0x01 } = {}) => {
     return jimu.setEyeColor({ eyesMask, time: 0x00, r: 0x00, g: 0x00, b: 0x00 });
   });
-  ipcMain.handle('jimu:setUltrasonicLed', async (_evt, { id = 1, time = 0xff, r = 0, g = 0, b = 0 } = {}) => {
+  ipcMain.handle('jimu:setUltrasonicLed', async (_evt, { id = 1, r = 0, g = 0, b = 0 } = {}) => {
     return jimu.setUltrasonicLed({
       id,
-      time,
       r: Math.max(0, Math.min(255, Math.round(r))),
       g: Math.max(0, Math.min(255, Math.round(g))),
       b: Math.max(0, Math.min(255, Math.round(b))),

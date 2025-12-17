@@ -313,12 +313,16 @@ COMMANDS:
         `[0x79, 0x04, 0x01, 0x02, 0x03, 0xad, 0xff, 0xf0, 0x00, 0x42, 0xff, 0x00, 0xff, 0x10, 0xff, 0xff, 0xff]`
   
     - Ultrasonic eye: (type = 0x06)
-      `[0x79, 06 01 ff 00 00 01 00 ff ff]` (red)
-        ultrasonic ID=1
-      Off 0x79, 060100000000000000
-          0x79, 0601ffaed50100ffff   // all colors on red > blue> green (propably)
-      response `[0x79, 0x06, 0x01, 0x00]`
-      NOTE: this project implements Ultrasonic LED as `79 06 <id> <time> 00 00 01 <R> <G> <B>` (experimental) and Off as `79 06 <id> 00 00 00 00 00 00 00`.
+      `[0x79, 06 01 red green blue level 00 ff ff]` 
+        - red, green, blue = color RGB
+        - level : 0 - off, 1 - bright, 2+ - dimm  (use 1)
+        response: 
+          -  `[0x79, 0x06, 0x01, 0x00]`  - OK
+          -  `[0x79, 0x06, 0x01, 0x01]`  - ERROR, disconnected
+      - sniffed example
+      `[0x79, 06 01 ff 00 00 01 00 ff ff]`   // ID=1 (red)
+      `[0x79, 06 01 ff ae d5 01 00 ff ff]`   // ID=1 all colors on red > blue > green 
+      - response: `[0x79, 0x06, 0x01, 0x00]` OK 
 
   - Eye animation (`0x78`): `[0x78, 0x04, eyesMask, animationId, 0x00, repetitions, R, G, B]`.
       - eyeMask: bitmask of eye IDs (0x01 = ID1, 0x02 = ID2, 0x03 = both, etc.).

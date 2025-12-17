@@ -125,7 +125,11 @@ export default function App() {
   const [motorDetail, setMotorDetail] = useState(null); // {id, dir, speed, maxSpeed, durationMs}
   const [eyeDetail, setEyeDetail] = useState(null); // {id, hex, r, g, b, anim, speedMs}
   const [irPanel, setIrPanel] = useState({ open: false, live: false });
-  const [usPanel, setUsPanel] = useState({ open: false, live: false, led: { id: 1, hex: '#00ff00', r: 0, g: 255, b: 0 } });
+  const [usPanel, setUsPanel] = useState({
+    open: false,
+    live: false,
+    led: { id: 1, hex: '#00ff00', r: 0, g: 255, b: 0 },
+  });
   const [sensorReadings, setSensorReadings] = useState({ ir: {}, us: {} }); // {ir:{[id]:{raw,at}}, us:{[id]:{raw,at}}}
   const [sensorError, setSensorError] = useState(null); // string|null
   const [isScanning, setIsScanning] = useState(false);
@@ -168,6 +172,21 @@ export default function App() {
     }
     setMotorDetail(null);
   };
+
+  const turnOffUltrasonicLeds = useCallback(
+    async (ids) => {
+      if (!ipc) return;
+      const list = Array.isArray(ids) ? ids : [];
+      for (const id of list) {
+        try {
+          await ipc.invoke('jimu:setUltrasonicLedOff', { id });
+        } catch (_) {
+          // best effort
+        }
+      }
+    },
+    [ipc],
+  );
   const stopEyeAnimation = useCallback(async () => {
     if (eyeAnimCancelRef.current) {
       eyeAnimCancelRef.current();
@@ -409,6 +428,7 @@ export default function App() {
   };
 
   const handleCloseProject = async () => {
+    await turnOffUltrasonicLeds(modules?.ultrasonic);
     if (ipc) await ipc.invoke('jimu:disconnect');
     setCurrentProjectId(null);
     setModules(null);
@@ -507,6 +527,7 @@ export default function App() {
                   await closeServoPanel();
                   await closeMotorPanel();
                   await closeEyePanel();
+                  await turnOffUltrasonicLeds(modules?.ultrasonic);
                   setIrPanel({ open: false, live: false });
                   setUsPanel((prev) => ({ ...prev, open: false, live: false }));
                   setSensorError(null);
@@ -581,6 +602,7 @@ export default function App() {
                             }
                             if (motorDetail) await closeMotorPanel();
                             if (eyeDetail) await closeEyePanel();
+                            await turnOffUltrasonicLeds(modules?.ultrasonic);
                             setIrPanel({ open: false, live: false });
                             setUsPanel((prev) => ({ ...prev, open: false, live: false }));
                             setSensorError(null);
@@ -628,6 +650,7 @@ export default function App() {
                             if (motorDetail && motorDetail.id !== id) await closeMotorPanel();
                             if (servoDetail) await closeServoPanel();
                             if (eyeDetail) await closeEyePanel();
+                            await turnOffUltrasonicLeds(modules?.ultrasonic);
                             setIrPanel({ open: false, live: false });
                             setUsPanel((prev) => ({ ...prev, open: false, live: false }));
                             setSensorError(null);
@@ -656,6 +679,7 @@ export default function App() {
                             if (servoDetail) await closeServoPanel();
                             if (motorDetail) await closeMotorPanel();
                             if (eyeDetail) await closeEyePanel();
+                            await turnOffUltrasonicLeds(modules?.ultrasonic);
                             setUsPanel((prev) => ({ ...prev, open: false, live: false }));
                             setIrPanel({ open: true, live: true });
                           }}
@@ -695,6 +719,7 @@ export default function App() {
                           onClick={async () => {
                             if (servoDetail) await closeServoPanel();
                             if (motorDetail) await closeMotorPanel();
+                            await turnOffUltrasonicLeds(modules?.ultrasonic);
                             setIrPanel({ open: false, live: false });
                             setUsPanel((prev) => ({ ...prev, open: false, live: false }));
                             setSensorError(null);
@@ -1435,10 +1460,7 @@ export default function App() {
                         {(modules?.ir?.length ? modules.ir : []).map((id) => {
                           const r = sensorReadings.ir?.[id];
                           return (
-                            <div key={`ir-row-${id}`} style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
-                              <span>IR {id}</span>
-                              <span>{r?.raw != null ? r.raw : 'n/a'}</span>
-                            </div>
+                            <div key={`ir-row-${id}`}>{`IR ${id}: ${r?.raw != null ? r.raw : 'n/a'}`}</div>
                           );
                         })}
                       </div>
@@ -1450,7 +1472,14 @@ export default function App() {
                   <div style={{ marginTop: 12, padding: 12, border: '1px solid #ddd', borderRadius: 8 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <h3 style={{ margin: 0 }}>Ultrasonic sensors</h3>
-                      <button onClick={() => setUsPanel((prev) => ({ ...prev, open: false, live: false }))}>Close</button>
+                      <button
+                        onClick={async () => {
+                          await turnOffUltrasonicLeds(modules?.ultrasonic);
+                          setUsPanel((prev) => ({ ...prev, open: false, live: false }));
+                        }}
+                      >
+                        Close
+                      </button>
                     </div>
                     <div style={{ marginTop: 8, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
                       <label>
@@ -1485,10 +1514,7 @@ export default function App() {
                           const raw = r?.raw;
                           const cm = raw == null ? null : raw === 0 ? 301.0 : raw / 10;
                           return (
-                            <div key={`us-row-${id}`} style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
-                              <span>US {id}</span>
-                              <span>{cm == null ? 'n/a' : `${cm.toFixed(1)} cm`}</span>
-                            </div>
+                            <div key={`us-row-${id}`}>{`US ${id}: ${cm == null ? 'n/a' : `${cm.toFixed(1)} cm`}`}</div>
                           );
                         })}
                       </div>
@@ -1539,7 +1565,6 @@ export default function App() {
                             try {
                               await ipc.invoke('jimu:setUltrasonicLed', {
                                 id: usPanel.led.id,
-                                time: 0xff,
                                 r: usPanel.led.r,
                                 g: usPanel.led.g,
                                 b: usPanel.led.b,

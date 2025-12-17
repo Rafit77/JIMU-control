@@ -9,14 +9,16 @@ This document describes the “project bar” and safety controls that are share
   - Close project (disconnects)
 - App menu (Electron):
   - File → New Project
-  - File → Open Project (stub)
-  - File → Save Project (stub)
+  - File → Open Project 
+  - File → Save Project
+  - File → Save as  
   - File → Close Project
 
 ## Required controls (target UX)
 - **Save**: write the current project to disk (no prompts if already has a path).
 - **Save As**: pick a new project folder/file and write to it.
 - **Dirty state**: show unsaved changes and confirm on actions that would lose changes (close project, open another project).
+- Text 
 
 ## Emergency Stop
 Always-visible red button on the right side of the project bar.

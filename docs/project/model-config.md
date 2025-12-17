@@ -79,6 +79,7 @@ Clicking any Ultrasonic sensor opens a US-only panel:
 - Poll ~5Hz and show values for all detected Ultrasonic sensors (single in-flight request; no overlapping polls)
 - Ultrasonic shown in cm (raw `0` treated as out-of-range and displayed as `301.0 cm`)
 - Ultrasonic LED: solid color test + Off (no blinking)
+  - Uses RGB + `level` per `docs/protocol.md`.
 
 ### Eye details panel
 Clicking an eye opens a panel for a single eye ID:
