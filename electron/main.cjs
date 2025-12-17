@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
-const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage } = electron;
+const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, globalShortcut } = electron;
 
 const isDev =
   process.env.VITE_DEV_SERVER === 'true' ||
@@ -160,10 +160,16 @@ const createWindow = async () => {
   winRef = win;
 
   if (isDev) {
-    await win.loadURL('http://localhost:5173');
     if (process.env.JIMU_OPEN_DEVTOOLS === '1') {
-      win.webContents.openDevTools({ mode: 'detach' });
+      win.webContents.once('did-finish-load', () => {
+        try {
+          win.webContents.openDevTools({ mode: 'detach' });
+        } catch (_) {
+          // ignore
+        }
+      });
     }
+    await win.loadURL('http://localhost:5173');
   } else {
     const indexPath = path.join(app.getAppPath(), 'dist', 'index.html');
     await win.loadFile(indexPath);
@@ -323,6 +329,24 @@ const main = async () => {
 
   await app.whenReady();
   await createWindow();
+
+  if (isDev) {
+    try {
+      globalShortcut.register('CommandOrControl+Shift+I', () => {
+        if (!winRef || winRef.isDestroyed()) return;
+        winRef.webContents.toggleDevTools();
+      });
+    } catch (_) {
+      // ignore
+    }
+    app.on('will-quit', () => {
+      try {
+        globalShortcut.unregisterAll();
+      } catch (_) {
+        // ignore
+      }
+    });
+  }
 };
 
 main().catch((err) => {
