@@ -6,7 +6,7 @@ Run Blockly-generated programs without blocking UI and without breaking BLE timi
 ## Execution model (proposal)
 - A project defines multiple **actions/functions**.
 - Triggers (Start/Stop, keyboard/gamepad, control panel widget events) start actions.
-- Actions run concurrently via a scheduler built on timers/promises (no busy loops).
+- Routines run concurrently via a scheduler built on timers/promises (no busy loops).
 
 ## Runtime responsibilities
 - Provide a small API surface to generated code (calls into `jimu/` for IO).

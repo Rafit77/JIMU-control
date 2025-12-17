@@ -3,7 +3,7 @@ import * as Slider from '@radix-ui/react-slider';
 
 const Section = ({ title, children }) => (
   <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 12, marginBottom: 12 }}>
-    <h2 style={{ margin: '0 0 8px 0' }}>{title}</h2>
+    {title ? <h2 style={{ margin: '0 0 8px 0' }}>{title}</h2> : null}
     {children}
   </div>
 );
@@ -19,6 +19,56 @@ const PlaceholderList = ({ items }) => (
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const clampByte = (v) => Math.max(0, Math.min(255, Math.round(v ?? 0)));
+const uniqSortedNums = (arr) =>
+  Array.from(new Set((Array.isArray(arr) ? arr : []).map((x) => Number(x)).filter((x) => Number.isFinite(x)))).sort(
+    (a, b) => a - b,
+  );
+const getModuleStatusKind = (id, savedIds, liveIds) => {
+  const isSaved = (savedIds || []).includes(id);
+  const isLive = (liveIds || []).includes(id);
+  if (isLive && isSaved) return 'detected';
+  if (isLive && !isSaved) return 'new';
+  if (!isLive && isSaved) return 'missing';
+  return 'missing';
+};
+const moduleStatusColor = (kind) => {
+  if (kind === 'detected') return '#2ea44f'; // green
+  if (kind === 'new') return '#1565c0'; // blue
+  if (kind === 'error') return '#b71c1c'; // red
+  return '#9e9e9e'; // gray (missing/unknown)
+};
+const moduleStatusBg = (kind) => {
+  if (kind === 'detected') return '#e8f5e9';
+  if (kind === 'new') return '#e3f2fd';
+  if (kind === 'error') return '#ffebee';
+  return '#f5f5f5';
+};
+const moduleButtonStyle = (kind, isLive) => {
+  const bg = moduleStatusColor(kind);
+  return {
+    padding: '6px 10px',
+    background: bg,
+    color: '#fff',
+    border: `1px solid ${bg}`,
+    borderRadius: 6,
+    opacity: isLive ? 1 : 0.65,
+    cursor: isLive ? 'pointer' : 'not-allowed',
+  };
+};
+const moduleBadgeStyle = (kind) => {
+  const c = moduleStatusColor(kind);
+  return {
+    display: 'inline-flex',
+    alignItems: 'center',
+    padding: '4px 8px',
+    borderRadius: 8,
+    border: `1px solid ${c}`,
+    background: moduleStatusBg(kind),
+    color: '#111',
+    fontSize: 12,
+    fontWeight: 600,
+  };
+};
 const rgbToHex = (r, g, b) =>
   `#${[r, g, b]
     .map((x) => clampByte(x).toString(16).padStart(2, '0'))
@@ -31,6 +81,67 @@ const hexToRgb = (hex) => {
   const b = parseInt(s.slice(4, 6), 16);
   if ([r, g, b].some((x) => Number.isNaN(x))) return null;
   return { r, g, b };
+};
+
+const BATTERY_EMPTY_VOLTS = 6.5;
+const BATTERY_FULL_VOLTS = 8.4;
+const batteryPercentFromVolts = (volts) => {
+  if (!Number.isFinite(volts)) return null;
+  const p = (volts - BATTERY_EMPTY_VOLTS) / (BATTERY_FULL_VOLTS - BATTERY_EMPTY_VOLTS);
+  return clamp(p, 0, 1);
+};
+
+const BatteryIcon = ({ volts, connected }) => {
+  const pct = batteryPercentFromVolts(volts);
+  const fillPct = connected && pct != null ? pct : 0;
+  const label =
+    connected && pct != null
+      ? `${volts.toFixed(2)}V (${Math.round(pct * 100)}%)`
+      : 'Disconnected';
+  const frameBg = connected ? '#fff' : '#f1f1f1';
+  const frameBorder = connected ? '#666' : '#aaa';
+  const fillColor = connected ? (pct != null && pct < 0.1 ? '#c62828' : '#2ea44f') : '#9e9e9e';
+
+  return (
+    <div title={label} style={{ display: 'flex', justifyContent: 'flex-end' }}>
+      <div
+        style={{
+          position: 'relative',
+          width: 82,
+          height: 22,
+          boxSizing: 'border-box',
+          borderRadius: 6,
+          border: `1px solid ${frameBorder}`,
+          background: frameBg,
+          padding: 3,
+        }}
+      >
+        <div
+          style={{
+            position: 'absolute',
+            right: -5,
+            top: 7,
+            width: 5,
+            height: 8,
+            borderRadius: '0 3px 3px 0',
+            border: `1px solid ${frameBorder}`,
+            borderLeft: 'none',
+            background: frameBg,
+            boxSizing: 'border-box',
+          }}
+        />
+        <div
+          style={{
+            height: '100%',
+            width: `${Math.round(fillPct * 100)}%`,
+            background: fillColor,
+            borderRadius: 4,
+            transition: 'width 120ms linear',
+          }}
+        />
+      </div>
+    </div>
+  );
 };
 
 const TouchBarSlider = ({
@@ -114,12 +225,12 @@ export default function App() {
   const [modules, setModules] = useState(null);
   const [battery, setBattery] = useState(null);
   const [log, setLog] = useState([]);
-  const [projects, setProjects] = useState([]);
-  const [projectName, setProjectName] = useState('');
-  const [currentProjectId, setCurrentProjectId] = useState(null);
+  const [projects, setProjects] = useState([]); // saved projects list (metadata)
+  const [currentProject, setCurrentProject] = useState(null); // {id, dir, data, thumbnailDataUrl}
+  const [isDirty, setIsDirty] = useState(false);
   const [bricks, setBricks] = useState([]);
   const [selectedBrickId, setSelectedBrickId] = useState('');
-  const [tab, setTab] = useState('model'); // model | actions | functions | control | logs
+  const [tab, setTab] = useState('model'); // model | motions | routines | controller | logs
   const [initialModules, setInitialModules] = useState(null);
   const [servoDetail, setServoDetail] = useState(null); // {id, mode, min, max, pos, speed, maxSpeed, dir, lastPos}
   const [motorDetail, setMotorDetail] = useState(null); // {id, dir, speed, maxSpeed, durationMs}
@@ -134,7 +245,21 @@ export default function App() {
   const [sensorError, setSensorError] = useState(null); // string|null
   const [isScanning, setIsScanning] = useState(false);
   const [verboseFrames, setVerboseFrames] = useState(false);
-  const ipc = window.require ? window.require('electron').ipcRenderer : null;
+  const [projectDialog, setProjectDialog] = useState({
+    open: false,
+    mode: 'new', // new | saveAs | edit
+    name: '',
+    description: '',
+  });
+  const ipc = useMemo(() => {
+    try {
+      if (typeof window?.require !== 'function') return null;
+      const electronApi = window.require('electron');
+      return electronApi?.ipcRenderer || null;
+    } catch (_) {
+      return null;
+    }
+  }, []);
   const eyeAnimCancelRef = useRef(null);
 
   const addLog = useCallback((msg) => {
@@ -149,8 +274,215 @@ export default function App() {
 
   const firmware = useMemo(() => modules?.text || 'n/a', [modules]);
   const listMask = (arr) => (arr && arr.length ? arr.join(', ') : 'none');
-  const currentProject = useMemo(() => projects.find((p) => p.id === currentProjectId) || null, [projects, currentProjectId]);
-  const hasProject = Boolean(currentProject);
+  const hasProject = Boolean(currentProject?.id);
+  const isConnected = status === 'Connected';
+  const updateCurrentProjectData = useCallback((updater) => {
+    setCurrentProject((prev) => {
+      if (!prev) return prev;
+      const nextData = updater(prev.data || {});
+      return { ...prev, data: nextData };
+    });
+    setIsDirty(true);
+  }, []);
+
+  const refreshProjectList = useCallback(async () => {
+    if (!ipc) return;
+    try {
+      const list = await ipc.invoke('project:list');
+      setProjects(Array.isArray(list) ? list : []);
+    } catch (e) {
+      addLog(`Project list failed: ${e?.message || String(e)}`);
+    }
+  }, [ipc, addLog]);
+
+  const saveCurrentProject = useCallback(async () => {
+    if (!ipc || !currentProject?.id) return;
+    const dataToSave = {
+      ...(currentProject.data || {}),
+      hardware: {
+        ...(currentProject.data?.hardware || {}),
+        modules: modules || currentProject.data?.hardware?.modules || null,
+      },
+    };
+    const saved = await ipc.invoke('project:save', { id: currentProject.id, data: dataToSave });
+    setCurrentProject(saved);
+    setIsDirty(false);
+    await refreshProjectList();
+    addLog('Project saved');
+  }, [ipc, currentProject, modules, refreshProjectList, addLog]);
+
+  const openProjectDialog = useCallback(
+    (mode) => {
+      if ((mode === 'saveAs' || mode === 'edit') && !currentProject?.id) return;
+      setProjectDialog({
+        open: true,
+        mode,
+        name: mode === 'new' ? '' : currentProject?.data?.name || 'Project',
+        description: mode === 'new' ? '' : currentProject?.data?.description || '',
+      });
+    },
+    [currentProject?.id, currentProject?.data?.name, currentProject?.data?.description],
+  );
+
+  const submitProjectDialog = useCallback(async () => {
+    if (!ipc) return;
+    const name = String(projectDialog.name || '').trim();
+    const description = String(projectDialog.description || '');
+    if (!name) {
+      addLog('Project name is required');
+      return;
+    }
+    if (projectDialog.mode === 'new') {
+      const created = await ipc.invoke('project:create', { name, description });
+      await refreshProjectList();
+      setCurrentProject(created);
+      setIsDirty(false);
+      setTab('model');
+      if (ipc) ipc.invoke('ui:setTitle', `JIMU Control - ${created?.data?.name || name}`);
+      addLog(`Project created: ${name}`);
+      setProjectDialog((prev) => ({ ...prev, open: false }));
+      return;
+    }
+    if (projectDialog.mode === 'saveAs') {
+      if (!currentProject?.id) return;
+      const saved = await ipc.invoke('project:clone', { fromId: currentProject.id, name, description });
+      setCurrentProject(saved);
+      setIsDirty(false);
+      await refreshProjectList();
+      addLog(`Project saved as "${name}"`);
+      if (ipc) ipc.invoke('ui:setTitle', `JIMU Control - ${name}`);
+      setProjectDialog((prev) => ({ ...prev, open: false }));
+      return;
+    }
+    if (projectDialog.mode === 'edit') {
+      if (!currentProject?.id) return;
+      updateCurrentProjectData((d) => ({ ...d, name, description }));
+      if (ipc) ipc.invoke('ui:setTitle', `JIMU Control - ${name}`);
+      addLog('Project metadata updated (unsaved)');
+      setProjectDialog((prev) => ({ ...prev, open: false }));
+    }
+  }, [ipc, projectDialog, refreshProjectList, currentProject?.id, updateCurrentProjectData, addLog]);
+
+  const openProjectById = useCallback(
+    async (id) => {
+      if (!ipc) return;
+      const loaded = await ipc.invoke('project:open', { id });
+      setCurrentProject(loaded);
+      setIsDirty(false);
+      setTab('model');
+      if (ipc) ipc.invoke('ui:setTitle', `JIMU Control - ${loaded?.data?.name || id}`);
+      setServoDetail((prev) => {
+        if (!prev) return prev;
+        const liveIds = modules?.servos || [];
+        if (!liveIds.includes(prev.id)) return null;
+        const cfg = loaded?.data?.calibration?.servoConfig?.[prev.id];
+        const mode = cfg?.mode || 'servo';
+        const rawMin = cfg?.min ?? -120;
+        const rawMax = cfg?.max ?? 120;
+        const min = clamp(Number(rawMin), -120, 119);
+        const max = clamp(Number(rawMax), min + 1, 120);
+        const pos = clamp(Number(prev.pos ?? 0), min, max);
+        return {
+          ...prev,
+          mode,
+          min,
+          max,
+          pos,
+          maxSpeed: cfg?.maxSpeed ?? 1000,
+          reverse: Boolean(cfg?.reverse),
+        };
+      });
+      setMotorDetail((prev) => {
+        if (!prev) return prev;
+        const liveIds = modules?.motors || [];
+        if (!liveIds.includes(prev.id)) return null;
+        const cfg = loaded?.data?.calibration?.motorConfig?.[prev.id];
+        return {
+          ...prev,
+          maxSpeed: cfg?.maxSpeed ?? 150,
+          reverse: Boolean(cfg?.reverse),
+          speed: 0,
+        };
+      });
+      return loaded;
+    },
+    [ipc, modules?.servos, modules?.motors],
+  );
+
+  const switchProjectTo = useCallback(
+    async (id) => {
+      if (isDirty && currentProject?.id) {
+        const save = window.confirm('You have unsaved changes. Save now?');
+        if (save) {
+          try {
+            await saveCurrentProject();
+          } catch (e) {
+            addLog(`Save failed: ${e?.message || String(e)}`);
+            return;
+          }
+        } else {
+          const discard = window.confirm('Discard changes and open another project?');
+          if (!discard) return;
+        }
+      }
+      await openProjectById(id);
+    },
+    [isDirty, currentProject?.id, saveCurrentProject, addLog, openProjectById],
+  );
+
+  const promptCreateProject = useCallback(async () => {
+    if (!ipc) return;
+    if (isDirty && currentProject?.id) {
+      const save = window.confirm('You have unsaved changes. Save now?');
+      if (save) {
+        try {
+          await saveCurrentProject();
+        } catch (e) {
+          addLog(`Save failed: ${e?.message || String(e)}`);
+          return;
+        }
+      } else {
+        const discard = window.confirm('Discard changes and create a new project?');
+        if (!discard) return;
+      }
+    }
+    openProjectDialog('new');
+  }, [ipc, isDirty, currentProject?.id, saveCurrentProject, refreshProjectList, addLog, openProjectDialog]);
+
+  const saveAsCurrentProject = useCallback(async () => {
+    openProjectDialog('saveAs');
+  }, [openProjectDialog]);
+
+  const deleteProjectById = useCallback(
+    async (id) => {
+      if (!ipc || !id) return;
+      if (id === currentProject?.id && isDirty) {
+        const save = window.confirm('You have unsaved changes. Save now before deleting this project?');
+        if (save) {
+          try {
+            await saveCurrentProject();
+          } catch (e) {
+            addLog(`Save failed: ${e?.message || String(e)}`);
+            return;
+          }
+        } else {
+          const discard = window.confirm('Discard changes and continue deleting this project?');
+          if (!discard) return;
+        }
+      }
+      const ok = window.confirm(`Delete project "${id}"? This removes it from ./jimu_saves/`);
+      if (!ok) return;
+      await ipc.invoke('project:delete', { id });
+      if (currentProject?.id === id) {
+        setCurrentProject(null);
+        setIsDirty(false);
+        if (ipc) ipc.invoke('ui:setTitle', 'JIMU Control');
+      }
+      await refreshProjectList();
+      addLog(`Project deleted: ${id}`);
+    },
+    [ipc, currentProject?.id, isDirty, saveCurrentProject, refreshProjectList, addLog],
+  );
   const closeServoPanel = async () => {
     if (servoDetail && ipc) {
       try {
@@ -209,34 +541,28 @@ export default function App() {
   useEffect(() => {
     if (!ipc) return;
     const onStatus = (_e, data) => {
-      // Detect composition change vs stored project
-      if (currentProjectId && currentProject?.modules) {
-        const prev = JSON.stringify(currentProject.modules?.masks || {});
-        const next = JSON.stringify(data?.masks || {});
-        if (prev !== next) {
-          const accept = window.confirm('Detected device composition change. Accept new layout?');
-          if (!accept) {
-            addLog('Composition change rejected by user');
-            return;
-          }
-        }
-      }
       setModules(data);
       setInitialModules((prevInit) => prevInit || data);
-      if (currentProjectId) {
-        setProjects((prev) =>
-          prev.map((p) => (p.id === currentProjectId ? { ...p, modules: data } : p)),
+      if (currentProject?.id && data?.text) {
+        setCurrentProject((prev) =>
+          prev
+            ? {
+                ...prev,
+                data: {
+                  ...(prev.data || {}),
+                  hardware: {
+                    ...(prev.data?.hardware || {}),
+                    firmware: data?.text || prev.data?.hardware?.firmware || null,
+                  },
+                },
+              }
+            : prev,
         );
       }
       addLog(`Status update: ${data?.text || 'n/a'}`);
     };
     const onBattery = (_e, data) => {
       setBattery(data);
-      if (currentProjectId) {
-        setProjects((prev) =>
-          prev.map((p) => (p.id === currentProjectId ? { ...p, battery: data } : p)),
-        );
-      }
       addLog(`Battery: ${data?.volts?.toFixed(3)}V ${data?.charging ? '(charging)' : ''}`);
     };
     const onDisconnect = () => {
@@ -252,18 +578,15 @@ export default function App() {
       addLog('Disconnected from device');
     };
     const onNewProject = () => {
-      const name = window.prompt('Project name:');
-      if (name && name.trim()) {
-        createProject(name.trim());
-      }
+      promptCreateProject();
     };
     const onSaveProject = () => {
-      addLog('Save project (stub serialization)');
-      // TODO: serialize currentProject to disk
+      if (!currentProject?.id) return;
+      saveCurrentProject().catch((e) => addLog(`Save failed: ${e?.message || String(e)}`));
     };
     const onOpenProject = () => {
-      addLog('Open project (stub load)');
-      // TODO: load project from disk and set state
+      refreshProjectList().catch(() => {});
+      addLog('Use the Project picker to open a project');
     };
     const onCloseProject = () => {
       handleCloseProject();
@@ -337,7 +660,11 @@ export default function App() {
       ipc.removeListener('jimu:frame', onFrame);
       ipc.removeListener('jimu:sensor', onSensor);
     };
-  }, [ipc, currentProjectId, currentProject, addLog, verboseFrames]);
+  }, [ipc, currentProject, addLog, verboseFrames, promptCreateProject, refreshProjectList, saveCurrentProject, stopEyeAnimation]);
+
+  useEffect(() => {
+    refreshProjectList().catch(() => {});
+  }, [refreshProjectList]);
 
   useEffect(() => {
     if (!ipc) return;
@@ -366,24 +693,6 @@ export default function App() {
     };
   }, [ipc, irPanel.live, usPanel.live, modules?.ir, modules?.ultrasonic]);
 
-  const createProject = (name) => {
-    const id = `prj-${Date.now()}`;
-    const proj = { id, name, modules: null, battery: null, connectedBrick: null };
-    setProjects((prev) => [...prev, proj]);
-    setCurrentProjectId(id);
-    setTab('model');
-    setModules(null);
-    setBattery(null);
-    setInitialModules(null);
-    setServoDetail(null);
-    setMotorDetail(null);
-    setIrPanel({ open: false, live: false });
-    setUsPanel((prev) => ({ ...prev, open: false, live: false }));
-    setSensorReadings({ ir: {}, us: {} });
-    setSensorError(null);
-    if (ipc) ipc.invoke('ui:setTitle', `JIMU Control - ${name}`);
-  };
-
   const handleConnect = async () => {
     if (!ipc) return addLog('IPC unavailable');
     if (!currentProject) return addLog('Select or create a project first');
@@ -394,18 +703,34 @@ export default function App() {
       setStatus('Connected');
       setModules(info?.modules || null);
       setBattery(info?.battery || null);
-      setProjects((prev) =>
-        prev.map((p) =>
-          p.id === currentProjectId
-            ? {
-                ...p,
-                connectedBrick: selectedBrickId,
-                modules: info?.modules || null,
-                battery: info?.battery || null,
-              }
-            : p,
-        ),
+      const nextBrick = {
+        id: selectedBrickId,
+        name: bricks.find((b) => b.id === selectedBrickId)?.name || null,
+      };
+      const nextFirmware = info?.modules?.text || null;
+      const prevBrick = currentProject?.data?.hardware?.connectedBrick || null;
+      const prevFirmware = currentProject?.data?.hardware?.firmware || null;
+      const shouldMarkDirty =
+        (!prevBrick && nextBrick?.id) ||
+        prevBrick?.id !== nextBrick?.id ||
+        prevBrick?.name !== nextBrick?.name ||
+        (nextFirmware && prevFirmware !== nextFirmware);
+      setCurrentProject((prev) =>
+        prev
+          ? {
+              ...prev,
+              data: {
+                ...(prev.data || {}),
+                hardware: {
+                  ...(prev.data?.hardware || {}),
+                  connectedBrick: nextBrick,
+                  firmware: nextFirmware || prev.data?.hardware?.firmware || null,
+                },
+              },
+            }
+          : prev,
       );
+      if (shouldMarkDirty) setIsDirty(true);
       setInitialModules(info?.modules || null);
       addLog('Connected to JIMU');
     } catch (err) {
@@ -419,9 +744,7 @@ export default function App() {
     try {
       const s = await ipc.invoke('jimu:refreshStatus');
       setModules(s || null);
-      if (currentProjectId) {
-        setProjects((prev) => prev.map((p) => (p.id === currentProjectId ? { ...p, modules: s || null } : p)));
-      }
+      // refresh is a live status; saved module snapshot updates only on explicit Save
     } catch (e) {
       addLog(`Refresh status failed: ${e?.message || String(e)}`);
     }
@@ -429,8 +752,27 @@ export default function App() {
 
   const handleCloseProject = async () => {
     await turnOffUltrasonicLeds(modules?.ultrasonic);
+    if (isDirty) {
+      const save = window.confirm('You have unsaved changes. Save now?');
+      if (save) {
+        try {
+          await saveCurrentProject();
+        } catch (e) {
+          addLog(`Save failed: ${e?.message || String(e)}`);
+        }
+      } else {
+        const discard = window.confirm('Discard changes and close project?');
+        if (!discard) return;
+      }
+    }
+    if (ipc) {
+      try {
+        await ipc.invoke('jimu:emergencyStop');
+      } catch (_) {
+        // ignore best effort
+      }
+    }
     if (ipc) await ipc.invoke('jimu:disconnect');
-    setCurrentProjectId(null);
     setModules(null);
     setBattery(null);
     setSelectedBrickId('');
@@ -442,6 +784,8 @@ export default function App() {
     setUsPanel((prev) => ({ ...prev, open: false, live: false }));
     setSensorReadings({ ir: {}, us: {} });
     setSensorError(null);
+    setCurrentProject(null);
+    setIsDirty(false);
     if (ipc) ipc.invoke('ui:setTitle', 'JIMU Control');
   };
 
@@ -466,34 +810,231 @@ export default function App() {
   };
 
   return (
-    <div style={{ fontFamily: 'Segoe UI, sans-serif', padding: 12, maxWidth: 1200, margin: '0 auto' }}>
+    <div style={{ fontFamily: 'Segoe UI, sans-serif', padding: 12, width: '100%', boxSizing: 'border-box' }}>
 
-      <Section title="Project">
-        {!hasProject && (
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <input
-              type="text"
-              placeholder="New project name"
-              value={projectName}
-              onChange={(e) => setProjectName(e.target.value)}
-            />
-            <button onClick={() => projectName.trim() && (createProject(projectName.trim()), setProjectName(''))}>
-              Create
-            </button>
-            <select value={currentProjectId || ''} onChange={(e) => setCurrentProjectId(e.target.value || null)}>
-              <option value="">Select project</option>
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-        {currentProject && (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <strong>Current:</strong> {currentProject.name}
-            <button onClick={handleCloseProject}>Close project</button>
+      <Section>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          {!ipc ? (
+            <div style={{ width: '100%', marginBottom: 8, color: '#b71c1c' }}>
+              IPC unavailable: running UI without Electron bridge (device + project persistence disabled).
+            </div>
+          ) : null}
+          {projectDialog.open ? (
+            <div
+              style={{
+                position: 'fixed',
+                inset: 0,
+                background: 'rgba(0,0,0,0.35)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 9999,
+              }}
+              onMouseDown={(e) => {
+                if (e.target === e.currentTarget) setProjectDialog((prev) => ({ ...prev, open: false }));
+              }}
+            >
+              <div style={{ width: 'min(520px, 92vw)', background: '#fff', borderRadius: 10, padding: 14 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                  <div style={{ fontWeight: 700 }}>
+                    {projectDialog.mode === 'new' ? 'New project' : projectDialog.mode === 'saveAs' ? 'Save project as' : 'Edit project'}
+                  </div>
+                  <button onClick={() => setProjectDialog((prev) => ({ ...prev, open: false }))}>Close</button>
+                </div>
+                <div style={{ marginTop: 10, display: 'grid', gap: 10 }}>
+                  <label style={{ display: 'grid', gap: 6 }}>
+                    <span>Name</span>
+                    <input
+                      type="text"
+                      value={projectDialog.name}
+                      onChange={(e) => setProjectDialog((prev) => ({ ...prev, name: e.target.value }))}
+                      autoFocus
+                    />
+                  </label>
+                  <label style={{ display: 'grid', gap: 6 }}>
+                    <span>Description</span>
+                    <textarea
+                      rows={3}
+                      value={projectDialog.description}
+                      onChange={(e) => setProjectDialog((prev) => ({ ...prev, description: e.target.value }))}
+                    />
+                  </label>
+                  {projectDialog.mode === 'edit' ? (
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+                      <button
+                        onClick={async () => {
+                          if (!ipc || !currentProject?.id) return;
+                          try {
+                            const res = await ipc.invoke('project:setThumbnail', { id: currentProject.id });
+                            if (res?.thumbnailDataUrl) {
+                              setCurrentProject((prev) => (prev ? { ...prev, thumbnailDataUrl: res.thumbnailDataUrl } : prev));
+                              await refreshProjectList();
+                              addLog('Thumbnail updated');
+                            }
+                          } catch (e) {
+                            addLog(`Thumbnail set failed: ${e?.message || String(e)}`);
+                          }
+                        }}
+                      >
+                        Change thumbnail
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (!currentProject?.id) return;
+                          await deleteProjectById(currentProject.id);
+                          setProjectDialog((prev) => ({ ...prev, open: false }));
+                        }}
+                        style={{ background: '#b71c1c', color: '#fff', border: '1px solid #7f0000' }}
+                      >
+                        Delete project
+                      </button>
+                    </div>
+                  ) : null}
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                    <button onClick={() => setProjectDialog((prev) => ({ ...prev, open: false }))}>Cancel</button>
+                    <button
+                      onClick={() => {
+                        submitProjectDialog().catch((e) => addLog(`Project action failed: ${e?.message || String(e)}`));
+                      }}
+                    >
+                      {projectDialog.mode === 'new' ? 'Create' : projectDialog.mode === 'saveAs' ? 'Save As' : 'Apply'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
+          {!hasProject ? (
+            <div style={{ flex: 1, minWidth: 260 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
+                <button onClick={promptCreateProject}>New project</button>
+                <button onClick={refreshProjectList}>Refresh list</button>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: 10 }}>
+                {projects.map((p) => (
+                  <div
+                    key={p.id}
+                    style={{
+                      border: '1px solid #ddd',
+                      borderRadius: 8,
+                      padding: 10,
+                      display: 'grid',
+                      gridTemplateColumns: '72px 1fr',
+                      gap: 10,
+                      alignItems: 'start',
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 64,
+                        height: 64,
+                        borderRadius: 6,
+                        border: '1px solid #ccc',
+                        background: '#f3f3f3',
+                        overflow: 'hidden',
+                      }}
+                      title={p.thumbnailDataUrl ? 'Thumbnail' : 'No thumbnail'}
+                    >
+                      {p.thumbnailDataUrl ? (
+                        <img src={p.thumbnailDataUrl} width={64} height={64} alt="" style={{ display: 'block' }} />
+                      ) : null}
+                    </div>
+                    <div>
+                      <div style={{ fontWeight: 600, marginBottom: 4 }}>{p.name || p.id}</div>
+                      <div style={{ color: '#666', fontSize: 12, minHeight: 32 }}>
+                        {p.description ? (
+                          String(p.description).slice(0, 80)
+                        ) : (
+                          <span style={{ color: '#999' }}>No description</span>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                        <button onClick={() => switchProjectTo(p.id)}>Open</button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {projects.length === 0 ? <div style={{ color: '#777' }}>No saved projects yet.</div> : null}
+              </div>
+            </div>
+          ) : (
+            <div style={{ flex: 1, minWidth: 260 }}>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => openProjectDialog('edit')}
+                  style={{
+                    width: 72,
+                    height: 72,
+                    padding: 0,
+                    border: '1px solid #ccc',
+                    borderRadius: 10,
+                    background: '#f3f3f3',
+                    overflow: 'hidden',
+                  }}
+                  title="Project thumbnail (Edit to change)"
+                >
+                  {currentProject?.thumbnailDataUrl ? (
+                    <img
+                      src={currentProject.thumbnailDataUrl}
+                      width={72}
+                      height={72}
+                      alt=""
+                      style={{ display: 'block' }}
+                    />
+                  ) : (
+                    <div style={{ fontSize: 11, color: '#666' }}>No thumbnail</div>
+                  )}
+                </button>
+                <div style={{ flex: 1, minWidth: 220 }}>
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div style={{ fontWeight: 700, fontSize: 16 }}>
+                      Project {currentProject?.data?.name || currentProject?.id}
+                      {isDirty ? <span style={{ marginLeft: 8, color: '#c62828' }}>*</span> : null}
+                    </div>
+                    <button onClick={() => openProjectDialog('edit')}>Edit</button>
+                  </div>
+                  <div style={{ marginTop: 6, color: '#555' }}>
+                    <span style={{ color: '#666' }}>Description:</span>{' '}
+                    {currentProject?.data?.description ? (
+                      <span>{currentProject.data.description}</span>
+                    ) : (
+                      <span style={{ color: '#999' }}>—</span>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                    <button
+                      onClick={() =>
+                        saveCurrentProject().catch((e) => addLog(`Save failed: ${e?.message || String(e)}`))
+                      }
+                    >
+                      Save
+                    </button>
+                    <button onClick={saveAsCurrentProject}>
+                      Save As
+                    </button>
+                    <button
+                      onClick={async () => {
+                        if (!currentProject?.id) return;
+                        if (isDirty) {
+                          const ok = window.confirm('Revert local changes and reload from disk?');
+                          if (!ok) return;
+                        }
+                        await openProjectById(currentProject.id);
+                        addLog('Project reloaded');
+                      }}
+                    >
+                      Revert
+                    </button>
+                    <button onClick={handleCloseProject}>Close</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div
+            style={{ marginLeft: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}
+          >
             <button
               onClick={async () => {
                 if (!ipc) return;
@@ -504,13 +1045,19 @@ export default function App() {
                   addLog(`Emergency stop failed: ${e?.message || String(e)}`);
                 }
               }}
-              style={{ marginLeft: 'auto', background: '#c62828', color: '#fff', border: '1px solid #8e0000' }}
+              style={{
+                background: '#c62828',
+                color: '#fff',
+                border: '1px solid #8e0000',
+                height: 42,
+              }}
               title="Stop motors/rotations and release servos (best effort)"
             >
               Emergency Stop
             </button>
+            <BatteryIcon volts={battery?.volts} connected={isConnected} />
           </div>
-        )}
+        </div>
       </Section>
 
       {!hasProject ? (
@@ -519,8 +1066,8 @@ export default function App() {
         </Section>
       ) : (
         <>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-            {['model', 'actions', 'functions', 'control', 'logs'].map((t) => (
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12, width: '100%' }}>
+            {['model', 'motions', 'routines', 'controller', 'logs'].map((t) => (
               <button
                 key={t}
                 onClick={async () => {
@@ -534,15 +1081,25 @@ export default function App() {
                   setTab(t);
                 }}
                 style={{
+                  flex: 1,
                   padding: '8px 12px',
                   background: tab === t ? '#0057d8' : '#eee',
                   color: tab === t ? '#fff' : '#000',
                   border: '1px solid #ccc',
                   borderRadius: 6,
                   cursor: 'pointer',
+                  textAlign: 'center',
                 }}
               >
-                {t[0].toUpperCase() + t.slice(1)}
+                {t === 'model'
+                  ? 'Model'
+                  : t === 'motions'
+                    ? 'Motions'
+                    : t === 'routines'
+                      ? 'Routines'
+                      : t === 'controller'
+                        ? 'Controller'
+                        : 'Logs'}
               </button>
             ))}
           </div>
@@ -558,6 +1115,10 @@ export default function App() {
                       try {
                         const found = await ipc.invoke('jimu:scan');
                         setBricks(found);
+                        const preferredId = currentProject?.data?.hardware?.connectedBrick?.id;
+                        if (preferredId && found.some((b) => b.id === preferredId)) {
+                          setSelectedBrickId(preferredId);
+                        }
                         addLog(`Scan found ${found.length} device(s)`);
                       } catch (e) {
                         addLog(`Scan failed: ${e?.message || String(e)}`);
@@ -593,10 +1154,19 @@ export default function App() {
                   <div>
                     <strong>Servos</strong>
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
-                      {modules?.servos?.map((id) => (
-                        <button
-                          key={`sv${id}`}
-                          onClick={async () => {
+                      {uniqSortedNums([
+                        ...(currentProject?.data?.hardware?.modules?.servos || []),
+                        ...(modules?.servos || []),
+                      ]).map((id) => {
+                        const savedIds = currentProject?.data?.hardware?.modules?.servos || [];
+                        const liveIds = modules?.servos || [];
+                        const isLive = liveIds.includes(id);
+                        const statusKind = getModuleStatusKind(id, savedIds, liveIds);
+                        return (
+                          <button
+                            key={`sv${id}`}
+                            onClick={async () => {
+                              if (!isLive) return;
                             if (servoDetail && servoDetail.id !== id) {
                               await closeServoPanel();
                             }
@@ -607,9 +1177,10 @@ export default function App() {
                             setUsPanel((prev) => ({ ...prev, open: false, live: false }));
                             setSensorError(null);
                             setServoDetail((prev) => {
-                              const mode = prev?.id === id ? prev.mode : currentProject?.servoConfig?.[id]?.mode || 'servo';
-                              const rawMin = prev?.id === id ? prev.min : currentProject?.servoConfig?.[id]?.min ?? -120;
-                              const rawMax = prev?.id === id ? prev.max : currentProject?.servoConfig?.[id]?.max ?? 120;
+                              const cfg = currentProject?.data?.calibration?.servoConfig?.[id] || {};
+                              const mode = prev?.id === id ? prev.mode : cfg.mode || 'servo';
+                              const rawMin = prev?.id === id ? prev.min : cfg.min ?? -120;
+                              const rawMax = prev?.id === id ? prev.max : cfg.max ?? 120;
                               const min = clamp(Number(rawMin), -120, 119);
                               const max = clamp(Number(rawMax), min + 1, 120);
                               const pos = prev?.id === id ? prev.pos : clamp(0, min, max);
@@ -620,8 +1191,9 @@ export default function App() {
                                 max,
                                 pos,
                                 speed: prev?.id === id ? prev.speed : 0,
-                                maxSpeed: prev?.id === id ? prev.maxSpeed : currentProject?.servoConfig?.[id]?.maxSpeed ?? 1000,
-                                dir: prev?.id === id ? prev.dir : currentProject?.servoConfig?.[id]?.dir || 'cw',
+                                maxSpeed: prev?.id === id ? prev.maxSpeed : cfg.maxSpeed ?? 1000,
+                                reverse: prev?.id === id ? prev.reverse : Boolean(cfg.reverse),
+                                dir: prev?.id === id ? prev.dir : 'cw',
                                 lastPos: prev?.id === id ? prev.lastPos : null,
                               };
                             });
@@ -632,21 +1204,32 @@ export default function App() {
                                 addLog(`Servo ${id} read failed: ${e?.message || String(e)}`);
                               }
                             }
-                          }}
-                          style={{ padding: '6px 10px' }}
-                        >
-                          Servo {id}
-                        </button>
-                      )) || <span>none</span>}
+                            }}
+                            style={moduleButtonStyle(statusKind, isLive)}
+                            title={statusKind}
+                          >
+                            Servo {id}
+                          </button>
+                        );
+                      }) || <span>none</span>}
                     </div>
                   </div>
                   <div>
                     <strong>Motors</strong>
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
-                      {modules?.motors?.map((id) => (
-                        <button
-                          key={`m${id}`}
-                          onClick={async () => {
+                      {uniqSortedNums([
+                        ...(currentProject?.data?.hardware?.modules?.motors || []),
+                        ...(modules?.motors || []),
+                      ]).map((id) => {
+                        const savedIds = currentProject?.data?.hardware?.modules?.motors || [];
+                        const liveIds = modules?.motors || [];
+                        const isLive = liveIds.includes(id);
+                        const statusKind = getModuleStatusKind(id, savedIds, liveIds);
+                        return (
+                          <button
+                            key={`m${id}`}
+                            onClick={async () => {
+                              if (!isLive) return;
                             if (motorDetail && motorDetail.id !== id) await closeMotorPanel();
                             if (servoDetail) await closeServoPanel();
                             if (eyeDetail) await closeEyePanel();
@@ -656,67 +1239,101 @@ export default function App() {
                             setSensorError(null);
                             setMotorDetail((prev) => ({
                               id,
-                              dir: prev?.id === id ? prev.dir : currentProject?.motorConfig?.[id]?.dir || 'cw',
+                              reverse: prev?.id === id ? prev.reverse : Boolean(currentProject?.data?.calibration?.motorConfig?.[id]?.reverse),
+                              dir: prev?.id === id ? prev.dir : 'cw',
                               speed: 0,
-                              maxSpeed: prev?.id === id ? prev.maxSpeed : currentProject?.motorConfig?.[id]?.maxSpeed ?? 150,
+                              maxSpeed: prev?.id === id ? prev.maxSpeed : currentProject?.data?.calibration?.motorConfig?.[id]?.maxSpeed ?? 150,
                               durationMs: prev?.id === id ? prev.durationMs : 1000,
                             }));
-                          }}
-                          style={{ padding: '6px 10px' }}
-                        >
-                          Motor {id}
-                        </button>
-                      )) || <span>none</span>}
+                            }}
+                            style={moduleButtonStyle(statusKind, isLive)}
+                            title={statusKind}
+                          >
+                            Motor {id}
+                          </button>
+                        );
+                      }) || <span>none</span>}
                     </div>
                   </div>
                   <div>
                     <strong>IR</strong>
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
-                      {modules?.ir?.map((id) => (
-                        <button
-                          key={`ir${id}`}
-                          onClick={async () => {
+                      {uniqSortedNums([
+                        ...(currentProject?.data?.hardware?.modules?.ir || []),
+                        ...(modules?.ir || []),
+                      ]).map((id) => {
+                        const savedIds = currentProject?.data?.hardware?.modules?.ir || [];
+                        const liveIds = modules?.ir || [];
+                        const isLive = liveIds.includes(id);
+                        const statusKind = getModuleStatusKind(id, savedIds, liveIds);
+                        return (
+                          <button
+                            key={`ir${id}`}
+                            onClick={async () => {
+                              if (!isLive) return;
                             if (servoDetail) await closeServoPanel();
                             if (motorDetail) await closeMotorPanel();
                             if (eyeDetail) await closeEyePanel();
                             await turnOffUltrasonicLeds(modules?.ultrasonic);
                             setUsPanel((prev) => ({ ...prev, open: false, live: false }));
                             setIrPanel({ open: true, live: true });
-                          }}
-                          style={{ padding: '6px 10px' }}
-                        >
-                          IR {id}
-                        </button>
-                      )) || <span>none</span>}
+                            }}
+                            style={moduleButtonStyle(statusKind, isLive)}
+                            title={statusKind}
+                          >
+                            IR {id}
+                          </button>
+                        );
+                      }) || <span>none</span>}
                     </div>
                   </div>
                   <div>
                     <strong>Ultrasonic</strong>
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
-                      {modules?.ultrasonic?.map((id) => (
-                        <button
-                          key={`us${id}`}
-                          onClick={async () => {
+                      {uniqSortedNums([
+                        ...(currentProject?.data?.hardware?.modules?.ultrasonic || []),
+                        ...(modules?.ultrasonic || []),
+                      ]).map((id) => {
+                        const savedIds = currentProject?.data?.hardware?.modules?.ultrasonic || [];
+                        const liveIds = modules?.ultrasonic || [];
+                        const isLive = liveIds.includes(id);
+                        const statusKind = getModuleStatusKind(id, savedIds, liveIds);
+                        return (
+                          <button
+                            key={`us${id}`}
+                            onClick={async () => {
+                              if (!isLive) return;
                             if (servoDetail) await closeServoPanel();
                             if (motorDetail) await closeMotorPanel();
                             if (eyeDetail) await closeEyePanel();
                             setIrPanel({ open: false, live: false });
                             setUsPanel((prev) => ({ ...prev, open: true, live: true, led: { ...prev.led, id } }));
-                          }}
-                          style={{ padding: '6px 10px' }}
-                        >
-                          US {id}
-                        </button>
-                      )) || <span>none</span>}
+                            }}
+                            style={moduleButtonStyle(statusKind, isLive)}
+                            title={statusKind}
+                          >
+                            US {id}
+                          </button>
+                        );
+                      }) || <span>none</span>}
                     </div>
                   </div>
                   <div>
                     <strong>Eyes</strong>
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
-                      {modules?.eyes?.map((id) => (
-                        <button
-                          key={`eye${id}`}
-                          onClick={async () => {
+                      {uniqSortedNums([
+                        ...(currentProject?.data?.hardware?.modules?.eyes || []),
+                        ...(modules?.eyes || []),
+                      ]).map((id) => {
+                        const savedIds = currentProject?.data?.hardware?.modules?.eyes || [];
+                        const liveIds = modules?.eyes || [];
+                        const isLive = liveIds.includes(id);
+                        const statusKind = getModuleStatusKind(id, savedIds, liveIds);
+                        return (
+                          <button
+                            key={`eye${id}`}
+                            onClick={async () => {
+                              if (!isLive) return;
                             if (servoDetail) await closeServoPanel();
                             if (motorDetail) await closeMotorPanel();
                             await turnOffUltrasonicLeds(modules?.ultrasonic);
@@ -735,17 +1352,44 @@ export default function App() {
                               anim: 'none',
                               speedMs: 250,
                             });
-                          }}
-                          style={{ padding: '6px 10px' }}
-                        >
-                          Eye {id}
-                        </button>
-                      )) || <span>none</span>}
+                            }}
+                            style={moduleButtonStyle(statusKind, isLive)}
+                            title={statusKind}
+                          >
+                            Eye {id}
+                          </button>
+                        );
+                      }) || <span>none</span>}
                     </div>
                   </div>
                   <div>
                     <strong>Speakers</strong>
-                    <div>{listMask(modules?.speakers)}</div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+                      {uniqSortedNums([
+                        ...(currentProject?.data?.hardware?.modules?.speakers || []),
+                        ...(modules?.speakers || []),
+                      ]).map((id) => {
+                        const savedIds = currentProject?.data?.hardware?.modules?.speakers || [];
+                        const liveIds = modules?.speakers || [];
+                        const isLive = liveIds.includes(id);
+                        const statusKind = getModuleStatusKind(id, savedIds, liveIds);
+                        return (
+                          <span
+                            key={`spk${id}`}
+                            style={{ ...moduleBadgeStyle(statusKind), opacity: isLive ? 1 : 0.65 }}
+                            title={statusKind}
+                          >
+                            Speaker {id}
+                          </span>
+                        );
+                      })}
+                      {uniqSortedNums([
+                        ...(currentProject?.data?.hardware?.modules?.speakers || []),
+                        ...(modules?.speakers || []),
+                      ]).length === 0 ? (
+                        <span style={{ color: '#777' }}>none</span>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
                 {servoDetail && (
@@ -765,6 +1409,14 @@ export default function App() {
                           <option value="motor">motor</option>
                           <option value="mixed">mixed</option>
                         </select>
+                      </label>
+                      <label style={{ marginLeft: 12 }}>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(servoDetail.reverse)}
+                          onChange={(e) => setServoDetail((prev) => ({ ...prev, reverse: e.target.checked }))}
+                        />{' '}
+                        Reverse
                       </label>
                     </div>
                     {(servoDetail.mode === 'servo' || servoDetail.mode === 'mixed') && (
@@ -824,7 +1476,7 @@ export default function App() {
                               try {
                                 await ipc.invoke('jimu:setServoPos', {
                                   id: servoDetail.id,
-                                  posDeg: servoDetail.pos,
+                                  posDeg: servoDetail.reverse ? -servoDetail.pos : servoDetail.pos,
                                 });
                                 setServoDetail((prev) => ({ ...prev, lastPos: servoDetail.pos }));
                                 addLog(`Servo ${servoDetail.id} -> pos ${servoDetail.pos}`);
@@ -854,25 +1506,22 @@ export default function App() {
                           <button
                             style={{ marginLeft: 8 }}
                             onClick={() => {
-                              setProjects((prev) =>
-                                prev.map((p) =>
-                                  p.id === currentProjectId
-                                    ? {
-                                        ...p,
-                                        servoConfig: {
-                                          ...(p.servoConfig || {}),
-                                          [servoDetail.id]: {
-                                            mode: servoDetail.mode,
-                                            min: servoDetail.min,
-                                            max: servoDetail.max,
-                                            maxSpeed: servoDetail.maxSpeed ?? 1000,
-                                            dir: servoDetail.dir,
-                                          },
-                                        },
-                                      }
-                                    : p,
-                                ),
-                              );
+                              updateCurrentProjectData((d) => ({
+                                ...d,
+                                calibration: {
+                                  ...(d.calibration || {}),
+                                  servoConfig: {
+                                    ...(d.calibration?.servoConfig || {}),
+                                    [servoDetail.id]: {
+                                      mode: servoDetail.mode,
+                                      min: servoDetail.min,
+                                      max: servoDetail.max,
+                                      maxSpeed: servoDetail.maxSpeed ?? 1000,
+                                      reverse: Boolean(servoDetail.reverse),
+                                    },
+                                  },
+                                },
+                              }));
                               addLog(`Saved servo ${servoDetail.id} config`);
                             }}
                           >
@@ -937,7 +1586,8 @@ export default function App() {
                           <button
                             onClick={async () => {
                               if (!ipc) return;
-                              const dir = servoDetail.dir === 'cw' ? 0x01 : 0x02;
+                              const dirBase = servoDetail.dir === 'cw' ? 0x01 : 0x02;
+                              const dir = servoDetail.reverse ? (dirBase === 0x01 ? 0x02 : 0x01) : dirBase;
                               try {
                                 await ipc.invoke('jimu:rotateServo', {
                                   id: servoDetail.id,
@@ -971,25 +1621,22 @@ export default function App() {
                           <button
                             style={{ marginLeft: 8 }}
                             onClick={() => {
-                              setProjects((prev) =>
-                                prev.map((p) =>
-                                  p.id === currentProjectId
-                                    ? {
-                                        ...p,
-                                        servoConfig: {
-                                          ...(p.servoConfig || {}),
-                                          [servoDetail.id]: {
-                                            mode: servoDetail.mode,
-                                            min: servoDetail.min,
-                                            max: servoDetail.max,
-                                            maxSpeed: servoDetail.maxSpeed ?? 1000,
-                                            dir: servoDetail.dir,
-                                          },
-                                        },
-                                      }
-                                    : p,
-                                ),
-                              );
+                              updateCurrentProjectData((d) => ({
+                                ...d,
+                                calibration: {
+                                  ...(d.calibration || {}),
+                                  servoConfig: {
+                                    ...(d.calibration?.servoConfig || {}),
+                                    [servoDetail.id]: {
+                                      mode: servoDetail.mode,
+                                      min: servoDetail.min,
+                                      max: servoDetail.max,
+                                      maxSpeed: servoDetail.maxSpeed ?? 1000,
+                                      reverse: Boolean(servoDetail.reverse),
+                                    },
+                                  },
+                                },
+                              }));
                               addLog(`Saved servo ${servoDetail.id} config`);
                             }}
                           >
@@ -1024,6 +1671,14 @@ export default function App() {
                           onChange={() => setMotorDetail((prev) => ({ ...prev, dir: 'cw' }))}
                         />{' '}
                         Clockwise
+                      </label>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(motorDetail.reverse)}
+                          onChange={(e) => setMotorDetail((prev) => ({ ...prev, reverse: e.target.checked }))}
+                        />{' '}
+                        Reverse
                       </label>
                       <label>
                         Max speed (1-150){' '}
@@ -1071,14 +1726,17 @@ export default function App() {
                         onClick={async () => {
                           if (!ipc) return;
                           try {
+                            const effectiveDir = motorDetail.reverse ? (motorDetail.dir === 'cw' ? 'ccw' : 'cw') : motorDetail.dir;
                             await ipc.invoke('jimu:rotateMotor', {
                               id: motorDetail.id,
-                              dir: motorDetail.dir,
+                              dir: effectiveDir,
                               speed: motorDetail.speed ?? 0,
                               maxSpeed: motorDetail.maxSpeed ?? 150,
                               durationMs: motorDetail.durationMs ?? 1000,
                             });
-                            addLog(`Motor ${motorDetail.id} rotate dir=${motorDetail.dir} speed=${motorDetail.speed} dur=${motorDetail.durationMs}ms`);
+                            addLog(
+                              `Motor ${motorDetail.id} rotate dir=${effectiveDir} speed=${motorDetail.speed} dur=${motorDetail.durationMs}ms`,
+                            );
                           } catch (e) {
                             addLog(`Motor rotate failed: ${e?.message || String(e)}`);
                           }
@@ -1091,9 +1749,10 @@ export default function App() {
                         onClick={async () => {
                           if (!ipc) return;
                           try {
+                            const effectiveDir = motorDetail.reverse ? (motorDetail.dir === 'cw' ? 'ccw' : 'cw') : motorDetail.dir;
                             await ipc.invoke('jimu:rotateMotor', {
                               id: motorDetail.id,
-                              dir: motorDetail.dir,
+                              dir: effectiveDir,
                               speed: 0,
                               maxSpeed: motorDetail.maxSpeed ?? 150,
                               durationMs: motorDetail.durationMs ?? 1000,
@@ -1110,22 +1769,19 @@ export default function App() {
                       <button
                         style={{ marginLeft: 8 }}
                         onClick={() => {
-                          setProjects((prev) =>
-                            prev.map((p) =>
-                              p.id === currentProjectId
-                                ? {
-                                    ...p,
-                                    motorConfig: {
-                                      ...(p.motorConfig || {}),
-                                      [motorDetail.id]: {
-                                        maxSpeed: motorDetail.maxSpeed ?? 150,
-                                        dir: motorDetail.dir,
-                                      },
-                                    },
-                                  }
-                                : p,
-                            ),
-                          );
+                          updateCurrentProjectData((d) => ({
+                            ...d,
+                            calibration: {
+                              ...(d.calibration || {}),
+                              motorConfig: {
+                                ...(d.calibration?.motorConfig || {}),
+                                [motorDetail.id]: {
+                                  maxSpeed: motorDetail.maxSpeed ?? 150,
+                                  reverse: Boolean(motorDetail.reverse),
+                                },
+                              },
+                            },
+                          }));
                           addLog(`Saved motor ${motorDetail.id} config`);
                         }}
                       >
@@ -1599,20 +2255,20 @@ export default function App() {
             </>
           )}
 
-          {tab === 'actions' && (
-            <Section title="Actions (placeholder)">
-              <div style={{ color: '#777' }}>Define reusable motion/action presets (future work).</div>
+          {tab === 'motions' && (
+            <Section title="Motions (placeholder)">
+              <div style={{ color: '#777' }}>Create and edit motion timelines (future work).</div>
             </Section>
           )}
 
-          {tab === 'functions' && (
-            <Section title="Functions (placeholder)">
+          {tab === 'routines' && (
+            <Section title="Routines (placeholder)">
               <div style={{ color: '#777' }}>Blockly editor integration will live here.</div>
             </Section>
           )}
 
-          {tab === 'control' && (
-            <Section title="Control Panel (placeholder)">
+          {tab === 'controller' && (
+            <Section title="Controller (placeholder)">
               <div style={{ color: '#777' }}>Grid of widgets for run mode; edit/run modes to be implemented.</div>
             </Section>
           )}

@@ -2,13 +2,13 @@
   "name": "jimu-control",
   "version": "0.0.1",
   "type": "module",
-  "main": "electron/main.js",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "concurrently -k \"npm:dev:ui\" \"npm:dev:electron\"",
     "dev:ui": "vite",
-    "dev:electron": "set ELECTRON_DEV=true&& set NODE_ENV=development&& wait-on http://localhost:5173 && electron .",
+    "dev:electron": "set ELECTRON_RUN_AS_NODE=&& set ELECTRON_DEV=true&& set NODE_ENV=development&& wait-on http://localhost:5173 && electron .",
     "build": "vite build",
-    "start": "electron ."
+    "start": "set ELECTRON_RUN_AS_NODE=&& electron ."
   },
   "dependencies": {
     "@abandonware/noble": "^1.9.2-15",

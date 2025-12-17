@@ -6,6 +6,7 @@ This document describes the project bar and safety controls that are shared acro
 - **Thumbnail**: when clicked, select picture; resize to 64x64 on import and store as `assets/thumbnail.png`.
 - **Project name**
 - **Project description** (textarea)
+- **Battery indicator**: show live battery voltage and an estimated percent in the project bar (updates about every 30s); low-battery (<10%) should be shown in red.
 - **Dirty state**: show unsaved changes and confirm on actions that would lose changes (close project, open another project).
 
 ### When no project is open
@@ -17,6 +18,7 @@ This document describes the project bar and safety controls that are shared acro
 - **Edit project**: change name/description/thumbnail; allows Save | Cancel | Delete.
 - **Save**: write the current project to disk (no prompts if already has a path).
 - **Save As**: pick a new project folder/file and write to it.
+- **Revert**: reload the project from disk; any open calibration/config panels (e.g. servo/motor) must immediately reflect the reloaded values (or be closed if the module is no longer detected).
 
 ## Project storage rules
 - Projects stored in `./jimu_saves/`

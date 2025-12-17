@@ -1,5 +1,8 @@
-import EventEmitter from 'events';
-import noble from '@abandonware/noble';
+import { EventEmitter } from 'node:events';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const noble = require('@abandonware/noble');
 
 const TARGET_NAME_SUBSTR = 'jimu';
 const CUSTOM_PREFIX = '49535343';

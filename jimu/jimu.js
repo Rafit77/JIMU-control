@@ -1,4 +1,4 @@
-import EventEmitter from 'events';
+import { EventEmitter } from 'node:events';
 import { JimuBleClient } from './jimu_ble.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -642,6 +642,8 @@ export class Jimu extends EventEmitter {
     // Best effort: stop motors and rotations, then release servos by reading all positions.
     const motorIds = s?.motors || [];
     const servoIds = s?.servos || [];
+    const eyeIds = s?.eyes || [];
+    const usIds = s?.ultrasonic || [];
 
     for (const id of motorIds) {
       try {
@@ -663,6 +665,22 @@ export class Jimu extends EventEmitter {
       await this.readServoPosition(0); // id=0 => read all; known to release servo hold
     } catch (_) {
       // ignore
+    }
+    if (eyeIds.length) {
+      try {
+        await this.setEyeColor({ eyesMask: idsToMaskByte(eyeIds), time: 0x00, r: 0x00, g: 0x00, b: 0x00 });
+        await sleep(25);
+      } catch (_) {
+        // ignore
+      }
+    }
+    for (const id of usIds) {
+      try {
+        await this.setUltrasonicLedOff(id);
+        await sleep(25);
+      } catch (_) {
+        // ignore
+      }
     }
   }
 }
