@@ -161,7 +161,9 @@ const createWindow = async () => {
 
   if (isDev) {
     await win.loadURL('http://localhost:5173');
-    win.webContents.openDevTools({ mode: 'detach' });
+    if (process.env.JIMU_OPEN_DEVTOOLS === '1') {
+      win.webContents.openDevTools({ mode: 'detach' });
+    }
   } else {
     const indexPath = path.join(app.getAppPath(), 'dist', 'index.html');
     await win.loadFile(indexPath);
