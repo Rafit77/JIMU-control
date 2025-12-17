@@ -17,6 +17,21 @@ const PlaceholderList = ({ items }) => (
 );
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const clampByte = (v) => Math.max(0, Math.min(255, Math.round(v ?? 0)));
+const rgbToHex = (r, g, b) =>
+  `#${[r, g, b]
+    .map((x) => clampByte(x).toString(16).padStart(2, '0'))
+    .join('')}`;
+const hexToRgb = (hex) => {
+  const s = String(hex || '').replace('#', '').trim();
+  if (s.length !== 6) return null;
+  const r = parseInt(s.slice(0, 2), 16);
+  const g = parseInt(s.slice(2, 4), 16);
+  const b = parseInt(s.slice(4, 6), 16);
+  if ([r, g, b].some((x) => Number.isNaN(x))) return null;
+  return { r, g, b };
+};
 
 const TouchBarSlider = ({
   minLimit = -120,
@@ -108,15 +123,15 @@ export default function App() {
   const [initialModules, setInitialModules] = useState(null);
   const [servoDetail, setServoDetail] = useState(null); // {id, mode, min, max, pos, speed, maxSpeed, dir, lastPos}
   const [motorDetail, setMotorDetail] = useState(null); // {id, dir, speed, maxSpeed, durationMs}
-  const [sensorDetail, setSensorDetail] = useState(null); // {type:'ir'|'us', id, live, lastValue, lastAt, lastErr}
+  const [eyeDetail, setEyeDetail] = useState(null); // {id, hex, r, g, b, anim, speedMs}
+  const [irPanel, setIrPanel] = useState({ open: false, live: false });
+  const [usPanel, setUsPanel] = useState({ open: false, live: false, led: { id: 1, hex: '#00ff00', r: 0, g: 255, b: 0 } });
+  const [sensorReadings, setSensorReadings] = useState({ ir: {}, us: {} }); // {ir:{[id]:{raw,at}}, us:{[id]:{raw,at}}}
+  const [sensorError, setSensorError] = useState(null); // string|null
   const [isScanning, setIsScanning] = useState(false);
   const [verboseFrames, setVerboseFrames] = useState(false);
   const ipc = window.require ? window.require('electron').ipcRenderer : null;
-  const sensorDetailRef = useRef(sensorDetail);
-
-  useEffect(() => {
-    sensorDetailRef.current = sensorDetail;
-  }, [sensorDetail]);
+  const eyeAnimCancelRef = useRef(null);
 
   const addLog = useCallback((msg) => {
     setLog((prev) => [`${new Date().toLocaleTimeString()} ${msg}`, ...prev].slice(0, 200));
@@ -153,6 +168,24 @@ export default function App() {
     }
     setMotorDetail(null);
   };
+  const stopEyeAnimation = useCallback(async () => {
+    if (eyeAnimCancelRef.current) {
+      eyeAnimCancelRef.current();
+      eyeAnimCancelRef.current = null;
+    }
+  }, []);
+  const closeEyePanel = useCallback(async () => {
+    await stopEyeAnimation();
+    if (ipc && eyeDetail?.id) {
+      const eyesMask = 1 << (eyeDetail.id - 1);
+      try {
+        await ipc.invoke('jimu:setEyeOff', { eyesMask });
+      } catch (_) {
+        // best effort
+      }
+    }
+    setEyeDetail(null);
+  }, [stopEyeAnimation, ipc, eyeDetail]);
 
   useEffect(() => {
     if (!ipc) return;
@@ -191,7 +224,12 @@ export default function App() {
       setStatus('Disconnected');
       setServoDetail(null);
       setMotorDetail(null);
-      setSensorDetail(null);
+      setEyeDetail(null);
+      stopEyeAnimation();
+      setIrPanel({ open: false, live: false });
+      setUsPanel((prev) => ({ ...prev, open: false, live: false }));
+      setSensorReadings({ ir: {}, us: {} });
+      setSensorError(null);
       addLog('Disconnected from device');
     };
     const onNewProject = () => {
@@ -239,16 +277,16 @@ export default function App() {
     };
     const onSensor = (_e, evt) => {
       const readings = evt?.parsed?.readings || [];
-      const active = sensorDetailRef.current;
-      if (!active || !readings.length) return;
-      const wantType = active.type === 'ir' ? 0x01 : 0x06;
-      const match = readings.find((r) => r.type === wantType && r.id === active.id);
-      if (!match) return;
-      setSensorDetail((prev) =>
-        prev && prev.id === active.id && prev.type === active.type
-          ? { ...prev, lastValue: match.value, lastAt: Date.now(), lastErr: null }
-          : prev,
-      );
+      if (!readings.length) return;
+      const now = Date.now();
+      setSensorReadings((prev) => {
+        const next = { ir: { ...prev.ir }, us: { ...prev.us } };
+        for (const r of readings) {
+          if (r?.type === 0x01) next.ir[r.id] = { raw: r.value, at: now };
+          if (r?.type === 0x06) next.us[r.id] = { raw: r.value, at: now };
+        }
+        return next;
+      });
     };
     ipc.on('jimu:status', onStatus);
     ipc.on('jimu:battery', onBattery);
@@ -284,28 +322,21 @@ export default function App() {
 
   useEffect(() => {
     if (!ipc) return;
+    if (!irPanel.live && !usPanel.live) return;
+    if (!modules?.ir?.length && !modules?.ultrasonic?.length) return;
     let disposed = false;
-    if (!sensorDetail?.live) return;
-    const type = sensorDetail.type;
-    const id = sensorDetail.id;
-    const delayMs = 200;
-
+    const delayMs = 250;
     const run = async () => {
       while (!disposed) {
         try {
-          const reading =
-            type === 'ir' ? await ipc.invoke('jimu:readSensorIR', id) : await ipc.invoke('jimu:readSensorUS', id);
-          if (disposed) break;
-          if (reading?.error) {
-            setSensorDetail((prev) => (prev ? { ...prev, lastErr: reading.message || 'Sensor read failed' } : prev));
-          } else if (reading?.value != null) {
-            setSensorDetail((prev) =>
-              prev ? { ...prev, lastValue: reading.value, lastAt: Date.now(), lastErr: null } : prev,
-            );
+          const res = await ipc.invoke('jimu:readSensors');
+          if (res?.error) {
+            setSensorError(res.message || 'Sensor read failed');
+          } else {
+            setSensorError(null);
           }
         } catch (e) {
-          if (disposed) break;
-          setSensorDetail((prev) => (prev ? { ...prev, lastErr: e?.message || String(e) } : prev));
+          setSensorError(e?.message || String(e));
         }
         await new Promise((r) => setTimeout(r, delayMs));
       }
@@ -314,7 +345,7 @@ export default function App() {
     return () => {
       disposed = true;
     };
-  }, [ipc, sensorDetail?.live, sensorDetail?.type, sensorDetail?.id]);
+  }, [ipc, irPanel.live, usPanel.live, modules?.ir, modules?.ultrasonic]);
 
   const createProject = (name) => {
     const id = `prj-${Date.now()}`;
@@ -327,7 +358,10 @@ export default function App() {
     setInitialModules(null);
     setServoDetail(null);
     setMotorDetail(null);
-    setSensorDetail(null);
+    setIrPanel({ open: false, live: false });
+    setUsPanel((prev) => ({ ...prev, open: false, live: false }));
+    setSensorReadings({ ir: {}, us: {} });
+    setSensorError(null);
     if (ipc) ipc.invoke('ui:setTitle', `JIMU Control - ${name}`);
   };
 
@@ -383,7 +417,11 @@ export default function App() {
     setInitialModules(null);
     await closeServoPanel();
     await closeMotorPanel();
-    setSensorDetail(null);
+    await closeEyePanel();
+    setIrPanel({ open: false, live: false });
+    setUsPanel((prev) => ({ ...prev, open: false, live: false }));
+    setSensorReadings({ ir: {}, us: {} });
+    setSensorError(null);
     if (ipc) ipc.invoke('ui:setTitle', 'JIMU Control');
   };
 
@@ -468,7 +506,10 @@ export default function App() {
                 onClick={async () => {
                   await closeServoPanel();
                   await closeMotorPanel();
-                  setSensorDetail(null);
+                  await closeEyePanel();
+                  setIrPanel({ open: false, live: false });
+                  setUsPanel((prev) => ({ ...prev, open: false, live: false }));
+                  setSensorError(null);
                   setTab(t);
                 }}
                 style={{
@@ -538,6 +579,11 @@ export default function App() {
                             if (servoDetail && servoDetail.id !== id) {
                               await closeServoPanel();
                             }
+                            if (motorDetail) await closeMotorPanel();
+                            if (eyeDetail) await closeEyePanel();
+                            setIrPanel({ open: false, live: false });
+                            setUsPanel((prev) => ({ ...prev, open: false, live: false }));
+                            setSensorError(null);
                             setServoDetail((prev) => {
                               const mode = prev?.id === id ? prev.mode : currentProject?.servoConfig?.[id]?.mode || 'servo';
                               const rawMin = prev?.id === id ? prev.min : currentProject?.servoConfig?.[id]?.min ?? -120;
@@ -581,7 +627,10 @@ export default function App() {
                           onClick={async () => {
                             if (motorDetail && motorDetail.id !== id) await closeMotorPanel();
                             if (servoDetail) await closeServoPanel();
-                            setSensorDetail(null);
+                            if (eyeDetail) await closeEyePanel();
+                            setIrPanel({ open: false, live: false });
+                            setUsPanel((prev) => ({ ...prev, open: false, live: false }));
+                            setSensorError(null);
                             setMotorDetail((prev) => ({
                               id,
                               dir: prev?.id === id ? prev.dir : currentProject?.motorConfig?.[id]?.dir || 'cw',
@@ -606,7 +655,9 @@ export default function App() {
                           onClick={async () => {
                             if (servoDetail) await closeServoPanel();
                             if (motorDetail) await closeMotorPanel();
-                            setSensorDetail({ type: 'ir', id, live: true, lastValue: null, lastAt: null, lastErr: null });
+                            if (eyeDetail) await closeEyePanel();
+                            setUsPanel((prev) => ({ ...prev, open: false, live: false }));
+                            setIrPanel({ open: true, live: true });
                           }}
                           style={{ padding: '6px 10px' }}
                         >
@@ -624,7 +675,9 @@ export default function App() {
                           onClick={async () => {
                             if (servoDetail) await closeServoPanel();
                             if (motorDetail) await closeMotorPanel();
-                            setSensorDetail({ type: 'us', id, live: true, lastValue: null, lastAt: null, lastErr: null });
+                            if (eyeDetail) await closeEyePanel();
+                            setIrPanel({ open: false, live: false });
+                            setUsPanel((prev) => ({ ...prev, open: true, live: true, led: { ...prev.led, id } }));
                           }}
                           style={{ padding: '6px 10px' }}
                         >
@@ -635,7 +688,35 @@ export default function App() {
                   </div>
                   <div>
                     <strong>Eyes</strong>
-                    <div>{listMask(modules?.eyes)}</div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+                      {modules?.eyes?.map((id) => (
+                        <button
+                          key={`eye${id}`}
+                          onClick={async () => {
+                            if (servoDetail) await closeServoPanel();
+                            if (motorDetail) await closeMotorPanel();
+                            setIrPanel({ open: false, live: false });
+                            setUsPanel((prev) => ({ ...prev, open: false, live: false }));
+                            setSensorError(null);
+                            await stopEyeAnimation();
+                            const initialHex = '#00ff00';
+                            const rgb = hexToRgb(initialHex);
+                            setEyeDetail({
+                              id,
+                              hex: initialHex,
+                              r: rgb?.r ?? 0,
+                              g: rgb?.g ?? 255,
+                              b: rgb?.b ?? 0,
+                              anim: 'none',
+                              speedMs: 250,
+                            });
+                          }}
+                          style={{ padding: '6px 10px' }}
+                        >
+                          Eye {id}
+                        </button>
+                      )) || <span>none</span>}
+                    </div>
                   </div>
                   <div>
                     <strong>Speakers</strong>
@@ -1029,20 +1110,308 @@ export default function App() {
                   </div>
                 )}
 
-                {sensorDetail && (
+                {eyeDetail && (
                   <div style={{ marginTop: 12, padding: 12, border: '1px solid #ddd', borderRadius: 8 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <h3 style={{ margin: 0 }}>
-                        Selected {sensorDetail.type === 'ir' ? 'IR' : 'Ultrasonic'} ID{sensorDetail.id}
-                      </h3>
-                      <button onClick={() => setSensorDetail(null)}>Close</button>
+                      <h3 style={{ margin: 0 }}>Selected eye ID{eyeDetail.id}</h3>
+                      <button onClick={closeEyePanel}>Close</button>
+                    </div>
+
+                    <div style={{ marginTop: 8, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          Picker
+                          <input
+                            type="color"
+                            value={eyeDetail.hex}
+                            onChange={(e) => {
+                              const rgb = hexToRgb(e.target.value);
+                              setEyeDetail((prev) =>
+                                prev
+                                  ? {
+                                      ...prev,
+                                      hex: e.target.value,
+                                      r: rgb?.r ?? prev.r,
+                                      g: rgb?.g ?? prev.g,
+                                      b: rgb?.b ?? prev.b,
+                                    }
+                                  : prev,
+                              );
+                            }}
+                            style={{ width: 44, height: 30, padding: 0, border: 'none', background: 'transparent' }}
+                          />
+                        </label>
+                        <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          Hex
+                          <input
+                            type="text"
+                            value={eyeDetail.hex}
+                            onChange={(e) => {
+                              const nextHex = e.target.value.startsWith('#') ? e.target.value : `#${e.target.value}`;
+                              const rgb = hexToRgb(nextHex);
+                              setEyeDetail((prev) =>
+                                prev ? { ...prev, hex: nextHex, ...(rgb ? rgb : {}) } : prev,
+                              );
+                            }}
+                            style={{ width: 90 }}
+                            placeholder="#RRGGBB"
+                          />
+                        </label>
+                        {[
+                          ['#ff0000', 'red'],
+                          ['#00ff00', 'green'],
+                          ['#0000ff', 'blue'],
+                          ['#ffff00', 'yellow'],
+                          ['#ff00ff', 'magenta'],
+                          ['#00ffff', 'cyan'],
+                          ['#ffffff', 'white'],
+                          ['#000000', 'off'],
+                        ].map(([hex, name]) => (
+                          <button
+                            key={hex}
+                            type="button"
+                            onClick={() => {
+                              const rgb = hexToRgb(hex);
+                              setEyeDetail((prev) =>
+                                prev
+                                  ? {
+                                      ...prev,
+                                      hex,
+                                      r: rgb?.r ?? prev.r,
+                                      g: rgb?.g ?? prev.g,
+                                      b: rgb?.b ?? prev.b,
+                                    }
+                                  : prev,
+                              );
+                            }}
+                            style={{
+                              width: 22,
+                              height: 22,
+                              padding: 0,
+                              borderRadius: 6,
+                              border: '1px solid #bbb',
+                              background: hex,
+                              cursor: 'pointer',
+                            }}
+                            title={name}
+                          />
+                        ))}
+                      </div>
+                      <label>
+                        R{' '}
+                        <input
+                          type="number"
+                          style={{ width: 70 }}
+                          min={0}
+                          max={255}
+                          value={eyeDetail.r}
+                          onChange={(e) =>
+                            setEyeDetail((prev) => {
+                              if (!prev) return prev;
+                              const r = clampByte(Number(e.target.value));
+                              return { ...prev, r, hex: rgbToHex(r, prev.g, prev.b) };
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        G{' '}
+                        <input
+                          type="number"
+                          style={{ width: 70 }}
+                          min={0}
+                          max={255}
+                          value={eyeDetail.g}
+                          onChange={(e) =>
+                            setEyeDetail((prev) => {
+                              if (!prev) return prev;
+                              const g = clampByte(Number(e.target.value));
+                              return { ...prev, g, hex: rgbToHex(prev.r, g, prev.b) };
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        B{' '}
+                        <input
+                          type="number"
+                          style={{ width: 70 }}
+                          min={0}
+                          max={255}
+                          value={eyeDetail.b}
+                          onChange={(e) =>
+                            setEyeDetail((prev) => {
+                              if (!prev) return prev;
+                              const b = clampByte(Number(e.target.value));
+                              return { ...prev, b, hex: rgbToHex(prev.r, prev.g, b) };
+                            })
+                          }
+                        />
+                      </label>
+                      <div style={{ width: 18, height: 18, borderRadius: 4, border: '1px solid #ccc', background: eyeDetail.hex }} />
+                    </div>
+
+                    <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <button
+                        onClick={async () => {
+                          if (!ipc) return;
+                          await stopEyeAnimation();
+                          const eyesMask = 1 << (eyeDetail.id - 1);
+                          try {
+                            await ipc.invoke('jimu:setEyeColor', {
+                              eyesMask,
+                              time: 0xff,
+                              r: eyeDetail.r,
+                              g: eyeDetail.g,
+                              b: eyeDetail.b,
+                            });
+                            addLog(`Eye ${eyeDetail.id} set rgb=${eyeDetail.r},${eyeDetail.g},${eyeDetail.b}`);
+                          } catch (e) {
+                            addLog(`Eye set color failed: ${e?.message || String(e)}`);
+                          }
+                        }}
+                      >
+                        Test color
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (!ipc) return;
+                          await stopEyeAnimation();
+                          const eyesMask = 1 << (eyeDetail.id - 1);
+                          try {
+                            await ipc.invoke('jimu:setEyeOff', { eyesMask });
+                            addLog(`Eye ${eyeDetail.id} off`);
+                          } catch (e) {
+                            addLog(`Eye off failed: ${e?.message || String(e)}`);
+                          }
+                        }}
+                      >
+                        Off
+                      </button>
+                    </div>
+
+                    <div style={{ marginTop: 12, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <label>
+                        Animation{' '}
+                        <select
+                          value={eyeDetail.anim}
+                          onChange={(e) => setEyeDetail((prev) => (prev ? { ...prev, anim: e.target.value } : prev))}
+                        >
+                          <option value="none">none</option>
+                          <option value="blink">blink</option>
+                          <option value="pulse">pulse</option>
+                          <option value="rainbow">rainbow</option>
+                        </select>
+                      </label>
+                      <label>
+                        Speed ms{' '}
+                        <input
+                          type="number"
+                          min={40}
+                          max={2000}
+                          style={{ width: 90 }}
+                          value={eyeDetail.speedMs}
+                          onChange={(e) =>
+                            setEyeDetail((prev) =>
+                              prev ? { ...prev, speedMs: Math.max(40, Math.min(2000, Number(e.target.value))) } : prev,
+                            )
+                          }
+                        />
+                      </label>
+                      <button
+                        onClick={async () => {
+                          if (!ipc) return;
+                          await stopEyeAnimation();
+                          const eyesMask = 1 << (eyeDetail.id - 1);
+                          const anim = eyeDetail.anim;
+                          if (anim === 'none') return;
+                          let cancelled = false;
+                          eyeAnimCancelRef.current = () => {
+                            cancelled = true;
+                          };
+                          const base = { r: eyeDetail.r, g: eyeDetail.g, b: eyeDetail.b };
+                          const stepMs = Math.max(40, eyeDetail.speedMs ?? 250);
+                          try {
+                            if (anim === 'blink') {
+                              while (!cancelled) {
+                                await ipc.invoke('jimu:setEyeColor', { eyesMask, time: 0xff, ...base });
+                                await sleep(stepMs);
+                                await ipc.invoke('jimu:setEyeOff', { eyesMask });
+                                await sleep(stepMs);
+                              }
+                            } else if (anim === 'pulse') {
+                              let t = 0;
+                              while (!cancelled) {
+                                t += 1;
+                                const k = (Math.sin(t / 6) + 1) / 2; // 0..1
+                                const r = clampByte(base.r * k);
+                                const g = clampByte(base.g * k);
+                                const b = clampByte(base.b * k);
+                                await ipc.invoke('jimu:setEyeColor', { eyesMask, time: 0xff, r, g, b });
+                                await sleep(stepMs);
+                              }
+                            } else if (anim === 'rainbow') {
+                              let hue = 0;
+                              while (!cancelled) {
+                                hue = (hue + 12) % 360;
+                                const c = 1;
+                                const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+                                let r1 = 0,
+                                  g1 = 0,
+                                  b1 = 0;
+                                if (hue < 60) [r1, g1, b1] = [c, x, 0];
+                                else if (hue < 120) [r1, g1, b1] = [x, c, 0];
+                                else if (hue < 180) [r1, g1, b1] = [0, c, x];
+                                else if (hue < 240) [r1, g1, b1] = [0, x, c];
+                                else if (hue < 300) [r1, g1, b1] = [x, 0, c];
+                                else [r1, g1, b1] = [c, 0, x];
+                                await ipc.invoke('jimu:setEyeColor', {
+                                  eyesMask,
+                                  time: 0xff,
+                                  r: clampByte(r1 * 255),
+                                  g: clampByte(g1 * 255),
+                                  b: clampByte(b1 * 255),
+                                });
+                                await sleep(stepMs);
+                              }
+                            }
+                          } finally {
+                            eyeAnimCancelRef.current = null;
+                          }
+                        }}
+                      >
+                        Start
+                      </button>
+                        <button
+                          onClick={async () => {
+                            await stopEyeAnimation();
+                            if (!ipc || !eyeDetail) return;
+                            const eyesMask = 1 << (eyeDetail.id - 1);
+                            try {
+                              await ipc.invoke('jimu:setEyeOff', { eyesMask });
+                            } catch (_) {
+                              // ignore
+                            }
+                          }}
+                        >
+                          Stop
+                        </button>
+                    </div>
+                  </div>
+                )}
+
+                {irPanel.open && modules?.ir?.length ? (
+                  <div style={{ marginTop: 12, padding: 12, border: '1px solid #ddd', borderRadius: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <h3 style={{ margin: 0 }}>IR sensors</h3>
+                      <button onClick={() => setIrPanel({ open: false, live: false })}>Close</button>
                     </div>
                     <div style={{ marginTop: 8, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
                       <label>
                         <input
                           type="checkbox"
-                          checked={Boolean(sensorDetail.live)}
-                          onChange={(e) => setSensorDetail((prev) => ({ ...prev, live: e.target.checked }))}
+                          checked={Boolean(irPanel.live)}
+                          onChange={(e) => setIrPanel((prev) => ({ ...prev, live: e.target.checked }))}
                         />{' '}
                         Live (5Hz)
                       </label>
@@ -1050,32 +1419,156 @@ export default function App() {
                         onClick={async () => {
                           if (!ipc) return;
                           try {
-                            const reading =
-                              sensorDetail.type === 'ir'
-                                ? await ipc.invoke('jimu:readSensorIR', sensorDetail.id)
-                                : await ipc.invoke('jimu:readSensorUS', sensorDetail.id);
-                            if (reading?.value != null) {
-                              setSensorDetail((prev) => ({ ...prev, lastValue: reading.value, lastAt: Date.now(), lastErr: null }));
-                            }
+                            const res = await ipc.invoke('jimu:readSensors');
+                            if (res?.error) setSensorError(res.message || 'Sensor read failed');
                           } catch (e) {
-                            setSensorDetail((prev) => ({ ...prev, lastErr: e?.message || String(e) }));
+                            setSensorError(e?.message || String(e));
                           }
                         }}
                       >
                         Read once
                       </button>
-                      <span>
-                        Value:{' '}
-                        {sensorDetail.lastValue == null
-                          ? 'n/a'
-                          : sensorDetail.type === 'us'
-                          ? `${(sensorDetail.lastValue / 10).toFixed(1)} cm (raw ${sensorDetail.lastValue})`
-                          : `${sensorDetail.lastValue}`}
-                      </span>
-                      {sensorDetail.lastErr && <span style={{ color: '#b71c1c' }}>Error: {sensorDetail.lastErr}</span>}
+                      {sensorError && <span style={{ color: '#b71c1c' }}>Error: {sensorError}</span>}
+                    </div>
+                    <div style={{ marginTop: 10, padding: 10, border: '1px solid #eee', borderRadius: 8 }}>
+                      <div style={{ display: 'grid', gap: 4 }}>
+                        {(modules?.ir?.length ? modules.ir : []).map((id) => {
+                          const r = sensorReadings.ir?.[id];
+                          return (
+                            <div key={`ir-row-${id}`} style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                              <span>IR {id}</span>
+                              <span>{r?.raw != null ? r.raw : 'n/a'}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   </div>
-                )}
+                ) : null}
+
+                {usPanel.open && modules?.ultrasonic?.length ? (
+                  <div style={{ marginTop: 12, padding: 12, border: '1px solid #ddd', borderRadius: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <h3 style={{ margin: 0 }}>Ultrasonic sensors</h3>
+                      <button onClick={() => setUsPanel((prev) => ({ ...prev, open: false, live: false }))}>Close</button>
+                    </div>
+                    <div style={{ marginTop: 8, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(usPanel.live)}
+                          onChange={(e) => setUsPanel((prev) => ({ ...prev, live: e.target.checked }))}
+                        />{' '}
+                        Live (5Hz)
+                      </label>
+                      <button
+                        onClick={async () => {
+                          if (!ipc) return;
+                          try {
+                            const res = await ipc.invoke('jimu:readSensors');
+                            if (res?.error) setSensorError(res.message || 'Sensor read failed');
+                          } catch (e) {
+                            setSensorError(e?.message || String(e));
+                          }
+                        }}
+                      >
+                        Read once
+                      </button>
+                      {sensorError && <span style={{ color: '#b71c1c' }}>Error: {sensorError}</span>}
+                    </div>
+
+                    <div style={{ marginTop: 10, padding: 10, border: '1px solid #eee', borderRadius: 8 }}>
+                      <strong>Readings</strong>
+                      <div style={{ marginTop: 6, display: 'grid', gap: 4 }}>
+                        {(modules?.ultrasonic?.length ? modules.ultrasonic : []).map((id) => {
+                          const r = sensorReadings.us?.[id];
+                          const raw = r?.raw;
+                          const cm = raw == null ? null : raw === 0 ? 301.0 : raw / 10;
+                          return (
+                            <div key={`us-row-${id}`} style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                              <span>US {id}</span>
+                              <span>{cm == null ? 'n/a' : `${cm.toFixed(1)} cm`}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div style={{ marginTop: 10, padding: 10, border: '1px solid #eee', borderRadius: 8 }}>
+                      <strong>US LED</strong>
+                      <div style={{ marginTop: 8, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <label>
+                          Sensor ID{' '}
+                          <select
+                            value={usPanel.led.id}
+                            onChange={(e) =>
+                              setUsPanel((prev) => ({ ...prev, led: { ...prev.led, id: Number(e.target.value) } }))
+                            }
+                          >
+                            {(modules?.ultrasonic?.length ? modules.ultrasonic : []).map((id) => (
+                              <option key={`us-opt-${id}`} value={id}>
+                                {id}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          Picker
+                          <input
+                            type="color"
+                            value={usPanel.led.hex}
+                            onChange={(e) => {
+                              const rgb = hexToRgb(e.target.value);
+                              setUsPanel((prev) => ({
+                                ...prev,
+                                led: {
+                                  ...prev.led,
+                                  hex: e.target.value,
+                                  r: rgb?.r ?? prev.led.r,
+                                  g: rgb?.g ?? prev.led.g,
+                                  b: rgb?.b ?? prev.led.b,
+                                },
+                              }));
+                            }}
+                            style={{ width: 44, height: 30, padding: 0, border: 'none', background: 'transparent' }}
+                          />
+                        </label>
+                        <button
+                          onClick={async () => {
+                            if (!ipc) return;
+                            try {
+                              await ipc.invoke('jimu:setUltrasonicLed', {
+                                id: usPanel.led.id,
+                                time: 0xff,
+                                r: usPanel.led.r,
+                                g: usPanel.led.g,
+                                b: usPanel.led.b,
+                              });
+                              addLog(`US ${usPanel.led.id} LED rgb=${usPanel.led.r},${usPanel.led.g},${usPanel.led.b}`);
+                            } catch (e) {
+                              addLog(`US LED set failed: ${e?.message || String(e)}`);
+                            }
+                          }}
+                        >
+                          Test LED
+                        </button>
+                        <button
+                          onClick={async () => {
+                            if (!ipc) return;
+                            try {
+                              await ipc.invoke('jimu:setUltrasonicLedOff', { id: usPanel.led.id });
+                              addLog(`US ${usPanel.led.id} LED off`);
+                            } catch (e) {
+                              addLog(`US LED off failed: ${e?.message || String(e)}`);
+                            }
+                          }}
+                        >
+                          Off
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
               </Section>
 
             </>

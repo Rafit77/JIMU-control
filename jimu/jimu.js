@@ -148,6 +148,8 @@ export class Jimu extends EventEmitter {
     this._batteryTimer = null;
     this._sendQueue = Promise.resolve();
     this._lastSendAt = 0;
+    this.singleFlight = true;
+    this.singleFlightTimeoutMs = 800;
     this._onFrame = this._onFrame.bind(this);
     this._onDisconnect = this._onDisconnect.bind(this);
     this._onFrameError = this._onFrameError.bind(this);
@@ -254,13 +256,96 @@ export class Jimu extends EventEmitter {
     this._batteryTimer = null;
   }
 
-  async _send(payload) {
+  _waitForFrameCmd(cmd, { timeoutMs = 1200 } = {}) {
+    return new Promise((resolve, reject) => {
+      const onFrame = (evt) => {
+        if (evt?.meta?.cmd !== cmd) return;
+        cleanup();
+        resolve(evt);
+      };
+      const onDisconnect = () => {
+        cleanup();
+        reject(new Error('Disconnected while waiting for response'));
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error(`Timed out waiting for response cmd=0x${cmd.toString(16)}`));
+      }, Math.max(100, timeoutMs ?? 1200));
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.removeListener('frame', onFrame);
+        this.removeListener('disconnect', onDisconnect);
+      };
+
+      this.on('frame', onFrame);
+      this.on('disconnect', onDisconnect);
+    });
+  }
+
+  _waitForStatus(timeoutMs = 1200) {
+    return new Promise((resolve, reject) => {
+      const onStatus = (s) => {
+        cleanup();
+        resolve(s);
+      };
+      const onDisconnect = () => {
+        cleanup();
+        reject(new Error('Disconnected while waiting for status'));
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error('Timed out waiting for status'));
+      }, Math.max(100, timeoutMs ?? 1200));
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.removeListener('status', onStatus);
+        this.removeListener('disconnect', onDisconnect);
+      };
+
+      this.on('status', onStatus);
+      this.on('disconnect', onDisconnect);
+    });
+  }
+
+  _waitForBattery(timeoutMs = 1200) {
+    return new Promise((resolve, reject) => {
+      const onBattery = (b) => {
+        cleanup();
+        resolve(b);
+      };
+      const onDisconnect = () => {
+        cleanup();
+        reject(new Error('Disconnected while waiting for battery'));
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error('Timed out waiting for battery'));
+      }, Math.max(100, timeoutMs ?? 1200));
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.removeListener('battery', onBattery);
+        this.removeListener('disconnect', onDisconnect);
+      };
+
+      this.on('battery', onBattery);
+      this.on('disconnect', onDisconnect);
+    });
+  }
+
+  async _send(payload, { blockUntil = null } = {}) {
     const run = async () => {
       const now = Date.now();
       const waitMs = Math.max(0, (this.commandSpacingMs ?? 0) - (now - this._lastSendAt));
       if (waitMs) await sleep(waitMs);
       const res = await this.client.send(payload);
       this._lastSendAt = Date.now();
+      const cmd = payload?.[0];
+      const autoBlock =
+        blockUntil || (this.singleFlight && typeof cmd === 'number' ? this._waitForFrameCmd(cmd, { timeoutMs: this.singleFlightTimeoutMs }).catch(() => null) : null);
+      if (autoBlock) await autoBlock;
       return res;
     };
     this._sendQueue = this._sendQueue.then(run, run);
@@ -269,8 +354,8 @@ export class Jimu extends EventEmitter {
 
   // ----------------- Public API -----------------
   async refreshStatus() {
-    await this._send([0x08, 0x00]);
-    await sleep(200);
+    const pending = this._waitForStatus(1500);
+    await this._send([0x08, 0x00], { blockUntil: pending });
     return this.state.status08;
   }
 
@@ -297,13 +382,16 @@ export class Jimu extends EventEmitter {
       { type: 0x08, mask: s.masks.speakers },
     ].filter((x) => x.mask);
     for (const cfg of enableSet) {
-      await this._send([0x71, cfg.type, cfg.mask, 0x00]);
+      const pending = this._waitForFrameCmd(0x71, { timeoutMs: 1200 });
+      await this._send([0x71, cfg.type, cfg.mask, 0x00], { blockUntil: pending });
       await sleep(120);
     }
   }
 
   async requestBattery() {
-    await this._send([0x27, 0x00]);
+    const pending = this._waitForBattery(1500);
+    await this._send([0x27, 0x00], { blockUntil: pending });
+    return this.state.battery;
   }
 
   async queryErrors() {
@@ -338,7 +426,7 @@ export class Jimu extends EventEmitter {
     // id=0 => all (no awaited result)
     const targetId = clampByte(id);
     const pending = targetId ? this._waitForServoPosition(targetId, timeoutMs) : null;
-    await this._send([0x0b, targetId, 0x00]);
+    await this._send([0x0b, targetId, 0x00], { blockUntil: pending });
     return pending ? pending : null;
   }
 
@@ -410,7 +498,7 @@ export class Jimu extends EventEmitter {
     const targetId = clampByte(id);
     const waiter = targetId ? this._makeSensorWaiter({ type: SENSOR_TYPE.IR, id: targetId, timeoutMs }) : null;
     try {
-      await this._send([0x7e, 0x01, SENSOR_TYPE.IR, targetId]);
+      await this._send([0x7e, 0x01, SENSOR_TYPE.IR, targetId], { blockUntil: waiter?.promise || null });
     } catch (e) {
       waiter?.cleanup?.();
       throw e;
@@ -422,7 +510,7 @@ export class Jimu extends EventEmitter {
     const targetId = clampByte(id);
     const waiter = targetId ? this._makeSensorWaiter({ type: SENSOR_TYPE.ULTRASONIC, id: targetId, timeoutMs }) : null;
     try {
-      await this._send([0x7e, 0x01, SENSOR_TYPE.ULTRASONIC, targetId]);
+      await this._send([0x7e, 0x01, SENSOR_TYPE.ULTRASONIC, targetId], { blockUntil: waiter?.promise || null });
     } catch (e) {
       waiter?.cleanup?.();
       throw e;
@@ -486,14 +574,26 @@ export class Jimu extends EventEmitter {
       }
       const payload = [0x7e, clampByte(batch.length)];
       batch.forEach((x) => payload.push(x.type, x.id));
-      await this._send(payload);
-      await sleep(100);
+      const pending = this._waitForFrameCmd(0x7e, { timeoutMs: 1500 });
+      await this._send(payload, { blockUntil: pending });
+      await sleep(50);
     }
   }
 
   // Eyes
   async setEyeColor({ eyesMask = 0x01, time = 0xff, r = 0xff, g = 0x00, b = 0x00 } = {}) {
     await this._send([0x79, 0x04, clampByte(eyesMask), clampByte(time), 0x01, 0xff, clampByte(r), clampByte(g), clampByte(b)]);
+  }
+
+  // Ultrasonic LED (experimental)
+  async setUltrasonicLed({ id = 1, time = 0xff, r = 0xff, g = 0x00, b = 0x00 } = {}) {
+    // Sniffed "off": 79 06 <id> 00 00 00 00 00 00 00
+    // "On" appears to include 3 control bytes before RGB.
+    await this._send([0x79, 0x06, clampByte(id), clampByte(time), 0x00, 0x00, 0x01, clampByte(r), clampByte(g), clampByte(b)]);
+  }
+
+  async setUltrasonicLedOff(id = 1) {
+    await this._send([0x79, 0x06, clampByte(id), 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
   }
 
   async setEyeSegments({ eyesMask = 0x01, time = 0xff, entries = [] } = {}) {

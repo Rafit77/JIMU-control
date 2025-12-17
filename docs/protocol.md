@@ -3,13 +3,14 @@
 > Note: UBTECH has not published an official public spec for JIMU BLE. The following is a working hypothesis to guide implementation and reverse-engineering. All packet formats and UUIDs must be verified against real hardware.
 > inspiration: https://github.com/msantang78/node-jimu/blob/master/PROTOCOL.md
 
-## Quick status (what’s known vs missing)
+## Quick status (what's known vs missing)
 - Framing/acks: `FB BF <len> ... checksum ED`, ack pattern `fb bf 06 <cmd> 00 <chk> ed`; error pattern `fb bf 06 <cmd> 01 <id> 01` with follow-up 0x05 error report.
 - Working commands: init (0x36, 0x01, 0x08), enable (0x71), battery (0x27), ping (0x03), servo set/read (0x07/0x09/0x0B), motor (0x90 single/dual), sensor read (0x7E), ID changes (0x74/0x0C), eye LEDs (0x78/0x79), error query (0x05).
-- Timing: reliable writes at ~25–50 ms spacing; 10 ms/5 ms produced drops. Notifications typically ~60 ms apart with jitter to ~1.3 s.
+- Timing: reliable writes at ~25-50 ms spacing; 10 ms/5 ms produced drops. Notifications typically ~60 ms apart with jitter to ~1.3 s.
+- **Critical constraint (no overlap):** only one command may be in flight at a time. After sending a command that expects a response (e.g. `0x08`, `0x27`, `0x0B`, `0x7E`), do not send any other command until the corresponding response arrives (or a timeout is hit). Overlapping commands can cause missing responses and repeated timeouts.
 - BLE layout: custom service starting with `49535343`; characteristic order not locked (notify/write selection heuristics in code). Needs on-device UUID confirmation.
 - Missing/needs check: service/characteristic UUIDs and order; meaning of 0x72, 0x2b, 0x2c, 0x3b, 0x91, 0x92; speaker control path; sensor value scales/units; eye segment masks; MTU limits; multi-frame notification splitting rules.
-- Redundant/raw sections below are kept for now—tagged “(review/remove?)” where they look like unprocessed captures or duplicated notes.
+- Redundant/raw sections below are kept for now-tagged "(review/remove?)" where they look like unprocessed captures or duplicated notes.
 
 ## Plan to confirm protocol
 - Use a BLE sniffer (nRF Sniffer or similar) or the nRF Connect app to inspect services/characteristics after pairing with the official JIMU app. => not working, and can't work. BT transmision is ENCRYPTED!
@@ -317,6 +318,7 @@ COMMANDS:
       Off 0x79, 060100000000000000
           0x79, 0601ffaed50100ffff   // all colors on red > blue> green (propably)
       response `[0x79, 0x06, 0x01, 0x00]`
+      NOTE: this project implements Ultrasonic LED as `79 06 <id> <time> 00 00 01 <R> <G> <B>` (experimental) and Off as `79 06 <id> 00 00 00 00 00 00 00`.
 
   - Eye animation (`0x78`): `[0x78, 0x04, eyesMask, animationId, 0x00, repetitions, R, G, B]`.
       - eyeMask: bitmask of eye IDs (0x01 = ID1, 0x02 = ID2, 0x03 = both, etc.).

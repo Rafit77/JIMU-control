@@ -22,7 +22,8 @@ Events pushed from the device:
 ### Live module overview
 Shows detected IDs for:
 - Servos (clickable)
-- Motors, IR, Ultrasonic, Eyes, Speakers (lists)
+- Motors, IR, Ultrasonic, Eyes (clickable)
+- Speakers (list)
 
 ### Servo details panel
 Clicking a servo opens a panel and requests current position.
@@ -69,10 +70,20 @@ Closing/changing motor:
 - Stop motor first (speed = 0).
 - If settings changed: prompt to save or discard.
 
-### IR / Ultrasonic sensor panels
-Clicking an IR/Ultrasonic sensor should open a live read panel:
-- Poll ~5Hz and show values (single in-flight request; no overlapping polls)
-- Ultrasonic shown in cm (calibrated)
+### IR sensor panel
+Clicking any IR sensor opens an IR-only panel:
+- Poll ~5Hz and show values for all detected IR sensors (single in-flight request; no overlapping polls)
+
+### Ultrasonic sensor panel
+Clicking any Ultrasonic sensor opens a US-only panel:
+- Poll ~5Hz and show values for all detected Ultrasonic sensors (single in-flight request; no overlapping polls)
+- Ultrasonic shown in cm (raw `0` treated as out-of-range and displayed as `301.0 cm`)
+- Ultrasonic LED: solid color test + Off (no blinking)
+
+### Eye details panel
+Clicking an eye opens a panel for a single eye ID:
+- Full-eye solid RGB test (`setEyeColor`), Off (`setEyeOff`)
+- Simple animations (blink / pulse / rainbow) with Start/Stop controls
 
 ## Planned direction
 - Model snapshot should become part of the saved project schema: `docs/architecture/project-format.md`
