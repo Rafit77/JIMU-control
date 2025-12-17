@@ -9,10 +9,11 @@
 ```
 MyProject/
   project.json
-  blocks/
-    routines/
-      main.xml
-      drive.xml
+  control/
+    panel.json
+  routines/
+    main.xml
+    drive.xml
   motions/
     wave.json
   assets/
@@ -26,7 +27,7 @@ MyProject/
 - Model snapshot: last accepted module discovery/status
 - Calibration/settings: servo/motor limits + modes
 - Variables: initial values + types
-- Triggers: mapping of Trigger → Routine
+- Triggers: mapping of Trigger → [Routine | Motion]
 - Control panel: grid/layout + widget definitions/bindings
 
 ## Model snapshot (from Model Config tab)
@@ -35,51 +36,62 @@ Model Config maintains a “hardware snapshot” inside the project so the rest 
 - apply per-servo/motor limits and calibration
 - detect composition changes and require user confirmation
 
+Save behavior for module changes:
+- `missing` (gray): removed from the saved snapshot on Save (pruned)
+- `new` (blue): added to the saved snapshot on Save
+- `error` (red): must remain in the saved snapshot because it is referenced by Motions/Routines
+
 ### Proposed fields
 - `hardware.connectedBrick`: last connected brick id/name
 - `hardware.firmware`: firmware string (from status)
-- `hardware.battery`: last-known `{ volts, charging }` (optional)
+- `hardware.battery`: last-known `{ volts, charging }` (in RAM only; not stored)
 - `hardware.modules`: last accepted module discovery/status (IDs + masks)
   - `servos`, `motors`, `ir`, `ultrasonic`, `eyes`, `speakers`
-  - `masks` (raw discovery masks, used for composition-change detection)
-- `hardware.invalidModules`: modules referenced by the project but missing on the current brick (for UI warnings)
+  - `detectedStatus`: per-module status (in RAM only)
+      - `detected`: in save and detected (green)
+      - `missing`: in save but not detected; safe to remove only if unused (gray)
+      - `error`: in save, not detected, but used by Routines or Motions; cannot be removed (red)
+      - `new`: not in save but currently detected (blue)
 - `calibration.servoConfig[id]`:
   - `mode`: `servo` | `motor` | `mixed`
-  - `min`, `max` (degrees -120..120)
-  - `maxSpeed` (1..1000 for continuous rotation)
-  - `dir` (`cw` / `ccw`)
+  - `min`, `max` (degrees -120..120), default -120..120
+  - `maxSpeed` (1..1000 for continuous rotation), default 1000
+  - `reverse` (bool) - if true: reverse direction in motor mode; invert position in servo mode (`pos = 240 - pos`)
 - `calibration.motorConfig[id]`:
-  - `maxSpeed` (1..150)
-  - `dir` (`cw` / `ccw`)
+  - `maxSpeed` (1..150), default 150
+  - `reverse` (bool) - if true: reverse direction in driving this motor
 
 Example (sketch):
 ```json
 {
   "schemaVersion": 1,
   "name": "MyProject",
+  "description": "My first 2 wheel drive crab.",
   "hardware": {
     "connectedBrick": { "id": "aa:bb:cc", "name": "JIMU2" },
     "firmware": "Jimu_p1.79",
-    "battery": { "volts": 7.812, "charging": false },
     "modules": {
       "servos": [1, 2, 3],
       "motors": [1, 2],
       "ir": [1],
       "ultrasonic": [1],
       "eyes": [1],
-      "speakers": [],
-      "masks": { "servos": [0, 0, 0, 7], "motors": 3 }
-    },
-    "invalidModules": { "servos": [4] }
+      "speakers": []
+    }
   },
   "calibration": {
     "servoConfig": {
-      "1": { "mode": "servo", "min": -120, "max": 120, "dir": "cw", "maxSpeed": 1000 }
+      "1": { "mode": "servo", "min": -120, "max": 120, "reverse": false, "maxSpeed": 1000 },
+      "2": { "mode": "motor", "min": -120, "max": 120, "reverse": false, "maxSpeed": 1000 },
+      "3": { "mode": "motor", "min": -120, "max": 120, "reverse": false, "maxSpeed": 1000 }
     },
     "motorConfig": {
-      "1": { "maxSpeed": 150, "dir": "cw" }
+      "1": { "maxSpeed": 150, "reverse": false },
+      "2": { "maxSpeed": 150, "reverse": true }
     }
   }
 }
 ```
 
+## `panel.json` (proposal)
+TBD.

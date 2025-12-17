@@ -363,6 +363,7 @@ COMMANDS:
             <0 rotate conter clock wise, 
             0= stop,
             max speed +/- 150, anything more not make it faster
+        * duration is in 0.1s ticks (e.g. 100ms => 1 tick, 1000ms => 10 ticks, max 6000ms => 60 ticks)
         * [time hi,time lo] 16 biy unsigned int / 10 = seconds of rotation
           max time is 6 second (60). Anything more, is 6 second
       resp: `[0x90, 0x00]` -> OK

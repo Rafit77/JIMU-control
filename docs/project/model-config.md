@@ -50,9 +50,16 @@ Rotation (mode `motor` / `mixed`):
 
 ### Composition change UX
 When rejecting a composition change:
-- Missing modules should be shown as invalid (red).
-- Newly detected modules should be shown as “extra” (green) and blocked from use until accepted.
-- If a module is referenced by Motions or Routines it must not be silently removed; keep it invalid until reintroduced or removed from the project.
+- Status colors (proposal):
+  - `detected` (green): in project snapshot and detected now
+  - `missing` (gray): in snapshot but not detected; safe to remove only if unused
+  - `error` (red): in snapshot, not detected, but referenced by Motions/Routines; cannot be removed silently
+  - `new` (blue): detected now but not in snapshot; blocked from use until accepted into the project
+
+When saving the project snapshot:
+- `missing` (gray) modules are deleted from the saved snapshot
+- `new` (blue) modules are added to the saved snapshot
+- `error` (red) modules stay in the saved snapshot (they are in use)
 
 ### Motor details panel
 Clicking a motor should open a motor panel.

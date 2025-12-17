@@ -17,7 +17,7 @@ const encodeMotorSpeed = (speed = 0) => {
 };
 const encodeMotorDuration = (ms = 6000) => {
   const capped = Math.max(0, Math.min(ms, 6000));
-  const ticks = Math.round(capped / 10); // protocol uses 0.1s units, max ~6s
+  const ticks = Math.round(capped / 100); // protocol uses 0.1s units, max ~6s
   return { ticks, hi: (ticks >> 8) & 0xff, lo: ticks & 0xff };
 };
 const rgbToHsv255 = (r, g, b) => {

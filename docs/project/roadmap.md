@@ -6,13 +6,10 @@ Status: complete (2025-12-17)
 - Status + battery + live logs in UI
 - Basic manual controls: set servo position, rotate motor, read IR/ultrasonic
 
-## Milestone 2 — “Model config”
-- Project: Module list snapshot with IDs saved to project file
-- Servo calibration (servo mode [servo | motor | mix], range limits, speed limit, direction revese)
-- Motor calibration (speed limit, direction reverse)
-- Tidy up project interface
-- Create real save / load / save as / delete project functions
-- Optional Project description and picture, visible when selecting project for load.
+## Milestone 2 — “Project & model config”
+- Working all visual project features
+- Real working save / load / save as / edit / delete project functions
+- Tidy up project interface and proper tab selector
 
 ## Milestone 3 — “Blockly MVP”
 - Blockly workspace embedded in app
