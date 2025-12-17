@@ -448,9 +448,16 @@ export class Jimu extends EventEmitter {
   async readServoPosition(id = 0, { timeoutMs = 1200 } = {}) {
     // id=0 => all (no awaited result)
     const targetId = clampByte(id);
-    const pending = targetId ? this._waitForServoPosition(targetId, timeoutMs) : null;
-    await this._send([0x0b, targetId, 0x00], { blockUntil: pending });
-    return pending ? pending : null;
+    if (targetId && !this.state?.connected) throw new Error('Not connected');
+
+    const wait = targetId ? this._waitForServoPositionCancelable(targetId, timeoutMs) : null;
+    try {
+      await this._send([0x0b, targetId, 0x00], { blockUntil: wait?.promise || null });
+    } catch (e) {
+      if (wait) wait.cancel();
+      throw e;
+    }
+    return wait ? wait.promise : null;
   }
 
   _waitForServoPosition(id, timeoutMs) {
@@ -478,6 +485,59 @@ export class Jimu extends EventEmitter {
       this.on('servoPosition', onPos);
       this.on('disconnect', onDisconnect);
     });
+  }
+
+  _waitForServoPositionCancelable(id, timeoutMs) {
+    let done = false;
+    let resolveOuter;
+    let rejectOuter;
+    let timer = null;
+
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      this.removeListener('servoPosition', onPos);
+      this.removeListener('disconnect', onDisconnect);
+    };
+
+    const onPos = (data) => {
+      if (done) return;
+      if (data?.id !== id) return;
+      done = true;
+      cleanup();
+      resolveOuter(data);
+    };
+
+    const onDisconnect = () => {
+      if (done) return;
+      done = true;
+      cleanup();
+      rejectOuter(new Error('Disconnected while waiting for servo position'));
+    };
+
+    timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      cleanup();
+      rejectOuter(new Error(`Timed out waiting for servo ${id} position`));
+    }, Math.max(100, timeoutMs ?? 1200));
+
+    const promise = new Promise((resolve, reject) => {
+      resolveOuter = resolve;
+      rejectOuter = reject;
+    });
+
+    this.on('servoPosition', onPos);
+    this.on('disconnect', onDisconnect);
+
+    return {
+      promise,
+      cancel: () => {
+        if (done) return;
+        done = true;
+        cleanup();
+        resolveOuter(null);
+      },
+    };
   }
 
   async changeServoId(fromId, toId) {

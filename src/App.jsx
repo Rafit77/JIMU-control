@@ -487,13 +487,17 @@ export default function App() {
     [ipc, currentProject?.id, isDirty, saveCurrentProject, refreshProjectList, addLog],
   );
   const closeServoPanel = async () => {
-    if (servoDetail && ipc) {
+    if (servoDetail && ipc && status === 'Connected') {
       try {
         await ipc.invoke('jimu:rotateServo', { id: servoDetail.id, dir: 0x01, speed: 0 });
       } catch (_) {
         // ignore
       }
-      await ipc.invoke('jimu:readServo', servoDetail.id);
+      try {
+        await ipc.invoke('jimu:readServo', servoDetail.id);
+      } catch (_) {
+        // ignore
+      }
     }
     setServoDetail(null);
   };
@@ -777,14 +781,20 @@ export default function App() {
         // ignore best effort
       }
     }
-    if (ipc) await ipc.invoke('jimu:disconnect');
+    await closeServoPanel();
+    await closeMotorPanel();
+    await closeEyePanel();
+    if (ipc) {
+      try {
+        await ipc.invoke('jimu:disconnect');
+      } catch (_) {
+        // ignore best effort
+      }
+    }
     setModules(null);
     setBattery(null);
     setSelectedBrickId('');
     setInitialModules(null);
-    await closeServoPanel();
-    await closeMotorPanel();
-    await closeEyePanel();
     setIrPanel({ open: false, live: false });
     setUsPanel((prev) => ({ ...prev, open: false, live: false }));
     setSensorReadings({ ir: {}, us: {} });
@@ -1493,6 +1503,31 @@ export default function App() {
                         </div>
                         <div>
                           <button
+                            onClick={async () => {
+                              if (!ipc) return;
+                              try {
+                                const res = await ipc.invoke('jimu:readServo', servoDetail.id);
+                                const deg = typeof res?.deg === 'number' ? res.deg : null;
+                                if (deg == null) {
+                                  addLog(`Servo ${servoDetail.id} read returned no position`);
+                                  return;
+                                }
+                                const uiDeg = servoDetail.reverse ? -deg : deg;
+                                setServoDetail((prev) => {
+                                  if (!prev || prev.id !== servoDetail.id) return prev;
+                                  const pos = clamp(Math.round(uiDeg), prev.min, prev.max);
+                                  return { ...prev, pos, lastPos: pos };
+                                });
+                                addLog(`Servo ${servoDetail.id} position read: ${deg} deg`);
+                              } catch (e) {
+                                addLog(`Servo ${servoDetail.id} read failed: ${e?.message || String(e)}`);
+                              }
+                            }}
+                          >
+                            Get position
+                          </button>
+                          <button
+                            style={{ marginLeft: 8 }}
                             onClick={async () => {
                               if (!ipc) return;
                               try {
