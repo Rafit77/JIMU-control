@@ -45,6 +45,8 @@ Prereqs: Windows 10/11, Bluetooth adapter, Node.js LTS.
 3) Run dev (Vite + Electron)  
 `npm run dev`
 
+ Ctrl+Shift+I  to show dev console for error checking
+
 4) Build + run production shell  
 `npm run build`  
 `npm start`
