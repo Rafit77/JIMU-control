@@ -23,7 +23,8 @@ const uniqSortedNums = (arr) =>
   Array.from(new Set((Array.isArray(arr) ? arr : []).map((x) => Number(x)).filter((x) => Number.isFinite(x)))).sort(
     (a, b) => a - b,
   );
-const getModuleStatusKind = (id, savedIds, liveIds) => {
+const getModuleStatusKind = (id, savedIds, liveIds, { connected = true } = {}) => {
+  if (!connected) return 'offline';
   const isSaved = (savedIds || []).includes(id);
   const isLive = (liveIds || []).includes(id);
   if (isLive && isSaved) return 'detected';
@@ -35,12 +36,14 @@ const moduleStatusColor = (kind) => {
   if (kind === 'detected') return '#2ea44f'; // green
   if (kind === 'new') return '#1565c0'; // blue
   if (kind === 'error') return '#b71c1c'; // red
+  if (kind === 'offline') return '#9e9e9e';
   return '#9e9e9e'; // gray (missing/unknown)
 };
 const moduleStatusBg = (kind) => {
   if (kind === 'detected') return '#e8f5e9';
   if (kind === 'new') return '#e3f2fd';
   if (kind === 'error') return '#ffebee';
+  if (kind === 'offline') return '#f5f5f5';
   return '#f5f5f5';
 };
 const moduleButtonStyle = (kind, isLive) => {
@@ -230,7 +233,7 @@ export default function App() {
   const [isDirty, setIsDirty] = useState(false);
   const [bricks, setBricks] = useState([]);
   const [selectedBrickId, setSelectedBrickId] = useState('');
-  const [tab, setTab] = useState('model'); // model | motions | routines | controller | logs
+  const [tab, setTab] = useState('model'); // model | actions | routines | controller | logs
   const [initialModules, setInitialModules] = useState(null);
   const [servoDetail, setServoDetail] = useState(null); // {id, mode, min, max, pos, speed, maxSpeed, dir, lastPos}
   const [motorDetail, setMotorDetail] = useState(null); // {id, dir, speed, maxSpeed, durationMs}
@@ -567,6 +570,8 @@ export default function App() {
     };
     const onDisconnect = () => {
       setStatus('Disconnected');
+      setModules(null);
+      setBattery(null);
       setServoDetail(null);
       setMotorDetail(null);
       setEyeDetail(null);
@@ -1062,12 +1067,12 @@ export default function App() {
 
       {!hasProject ? (
         <Section title="Create or select a project">
-          <div style={{ color: '#777' }}>Use the controls above or File → New Project to start.</div>
+          <div style={{ color: '#777' }}>Use the controls above to create or open a project.</div>
         </Section>
       ) : (
         <>
           <div style={{ display: 'flex', gap: 8, marginBottom: 12, width: '100%' }}>
-            {['model', 'motions', 'routines', 'controller', 'logs'].map((t) => (
+            {['model', 'actions', 'routines', 'controller', 'logs'].map((t) => (
               <button
                 key={t}
                 onClick={async () => {
@@ -1093,8 +1098,8 @@ export default function App() {
               >
                 {t === 'model'
                   ? 'Model'
-                  : t === 'motions'
-                    ? 'Motions'
+                  : t === 'actions'
+                    ? 'Actions'
                     : t === 'routines'
                       ? 'Routines'
                       : t === 'controller'
@@ -1139,7 +1144,24 @@ export default function App() {
                   </select>
                   <button onClick={handleConnect}>Connect</button>
                   <button onClick={handleRefresh}>Refresh status</button>
-                  <span>Status: {status}</span>
+                  <span>
+                    Status:{' '}
+                    <span
+                      style={{
+                        fontWeight: 700,
+                        color:
+                          status === 'Connected'
+                            ? '#2ea44f'
+                            : status === 'Disconnected'
+                              ? '#777'
+                              : status === 'Error'
+                                ? '#c62828'
+                                : '#444',
+                      }}
+                    >
+                      {status}
+                    </span>
+                  </span>
                 </div>
                 <div style={{ marginTop: 8 }}>
                   <strong>Firmware:</strong> {firmware}
@@ -1160,8 +1182,8 @@ export default function App() {
                       ]).map((id) => {
                         const savedIds = currentProject?.data?.hardware?.modules?.servos || [];
                         const liveIds = modules?.servos || [];
-                        const isLive = liveIds.includes(id);
-                        const statusKind = getModuleStatusKind(id, savedIds, liveIds);
+                        const isLive = isConnected && liveIds.includes(id);
+                        const statusKind = getModuleStatusKind(id, savedIds, liveIds, { connected: isConnected });
                         return (
                           <button
                             key={`sv${id}`}
@@ -1223,8 +1245,8 @@ export default function App() {
                       ]).map((id) => {
                         const savedIds = currentProject?.data?.hardware?.modules?.motors || [];
                         const liveIds = modules?.motors || [];
-                        const isLive = liveIds.includes(id);
-                        const statusKind = getModuleStatusKind(id, savedIds, liveIds);
+                        const isLive = isConnected && liveIds.includes(id);
+                        const statusKind = getModuleStatusKind(id, savedIds, liveIds, { connected: isConnected });
                         return (
                           <button
                             key={`m${id}`}
@@ -1264,8 +1286,8 @@ export default function App() {
                       ]).map((id) => {
                         const savedIds = currentProject?.data?.hardware?.modules?.ir || [];
                         const liveIds = modules?.ir || [];
-                        const isLive = liveIds.includes(id);
-                        const statusKind = getModuleStatusKind(id, savedIds, liveIds);
+                        const isLive = isConnected && liveIds.includes(id);
+                        const statusKind = getModuleStatusKind(id, savedIds, liveIds, { connected: isConnected });
                         return (
                           <button
                             key={`ir${id}`}
@@ -1296,8 +1318,8 @@ export default function App() {
                       ]).map((id) => {
                         const savedIds = currentProject?.data?.hardware?.modules?.ultrasonic || [];
                         const liveIds = modules?.ultrasonic || [];
-                        const isLive = liveIds.includes(id);
-                        const statusKind = getModuleStatusKind(id, savedIds, liveIds);
+                        const isLive = isConnected && liveIds.includes(id);
+                        const statusKind = getModuleStatusKind(id, savedIds, liveIds, { connected: isConnected });
                         return (
                           <button
                             key={`us${id}`}
@@ -1327,8 +1349,8 @@ export default function App() {
                       ]).map((id) => {
                         const savedIds = currentProject?.data?.hardware?.modules?.eyes || [];
                         const liveIds = modules?.eyes || [];
-                        const isLive = liveIds.includes(id);
-                        const statusKind = getModuleStatusKind(id, savedIds, liveIds);
+                        const isLive = isConnected && liveIds.includes(id);
+                        const statusKind = getModuleStatusKind(id, savedIds, liveIds, { connected: isConnected });
                         return (
                           <button
                             key={`eye${id}`}
@@ -1371,8 +1393,8 @@ export default function App() {
                       ]).map((id) => {
                         const savedIds = currentProject?.data?.hardware?.modules?.speakers || [];
                         const liveIds = modules?.speakers || [];
-                        const isLive = liveIds.includes(id);
-                        const statusKind = getModuleStatusKind(id, savedIds, liveIds);
+                        const isLive = isConnected && liveIds.includes(id);
+                        const statusKind = getModuleStatusKind(id, savedIds, liveIds, { connected: isConnected });
                         return (
                           <span
                             key={`spk${id}`}
@@ -2255,9 +2277,9 @@ export default function App() {
             </>
           )}
 
-          {tab === 'motions' && (
-            <Section title="Motions (placeholder)">
-              <div style={{ color: '#777' }}>Create and edit motion timelines (future work).</div>
+          {tab === 'actions' && (
+            <Section title="Actions (placeholder)">
+              <div style={{ color: '#777' }}>Create and edit action timelines (future work).</div>
             </Section>
           )}
 

@@ -18,6 +18,6 @@
 - Status / what works today: `project/status.md`
 - Roadmap / milestones: `project/roadmap.md`
 - Glossary (brick/module terms): `project/glossary.md`
-- Motions (pose sequences): `project/motions.md`
+- Actions (pose sequences): `project/actions.md`
 - Model Config tab: `project/model-config.md`
 - Project controls: `project/project-controls.md`

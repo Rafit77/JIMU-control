@@ -4,7 +4,7 @@
 Run Blockly-generated programs without blocking UI and without breaking BLE timing constraints.
 
 ## Execution model (proposal)
-- A project defines multiple **actions/functions**.
+- A project defines multiple **actions** and **routines**.
 - Triggers (Start/Stop, keyboard/gamepad, control panel widget events) start actions.
 - Routines run concurrently via a scheduler built on timers/promises (no busy loops).
 
@@ -20,7 +20,8 @@ Run Blockly-generated programs without blocking UI and without breaking BLE timi
 - Actuation: `setServoPosition(id, deg, durationMs)`, `rotateServo(id, speed)`, `rotateMotor(id, speed)`, `setEyeColor(mask, rgb)`
 - Timing/helpers: `wait(ms)`, `every(ms, fn)` (scheduler-managed)
 
-## Motion playback (pose sequences)
-Non-code “Motions” (recorded frame timelines) should be callable from generated code:
-- Proposed primitive: `playMotion(motionId)` (runs sequential frames, respects cancellation, and relies on SDK pacing).
-- See `../project/motions.md` for the editor requirements and the playback contract.
+## Action playback (pose sequences)
+Non-code “Actions” (recorded frame timelines) should be callable from generated code:
+- Proposed primitive: `playAction(actionId)` (runs sequential frames, respects cancellation, and relies on SDK pacing).
+- See `../project/actions.md` for the editor requirements and the playback contract.
+

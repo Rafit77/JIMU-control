@@ -11,8 +11,8 @@ Deep dives:
 ## Experience surface (product)
 - Project home: create/open projects, thumbnails, recent list.
 - Model config: connect to brick, discover modules, test & calibrate.
-- Blockly editor: functions/actions/triggers, variables, control flow.
-- Control panel: build widgets (buttons/sliders/joystick) and bind to code + keyboard/gamepad.
+- Blockly editor: routines/actions/triggers, variables, control flow.
+- Controller: build widgets (buttons/sliders/joystick) and bind to code + keyboard/gamepad.
 - Diagnostics: adapter check, firmware/battery, logs, reconnect status.
 
 ## High-level components
@@ -40,4 +40,3 @@ flowchart LR
 - Runtime interface (SDK API) that generated code can call: `architecture/runtime.md`
 - Project schema and migrations: `architecture/project-format.md`
 - Device abstraction and throttling rules: `architecture/device-layer.md`
-

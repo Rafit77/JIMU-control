@@ -23,3 +23,6 @@ npm start
 - If scanning shows nothing, reboot Bluetooth (toggle off/on) and try again.
 - If connect works but commands fail intermittently, increase command spacing (see timing notes in `../protocol.md`) and avoid rapid bursts.
 
+## App troubleshooting
+- If Electron opens a blank window, open DevTools and check for runtime errors in `src/App.jsx`.
+- If your environment sets `ELECTRON_RUN_AS_NODE=1`, Electron will start in "Node mode" and the app will not run. The repo scripts clear this variable, but verify it is not set globally.

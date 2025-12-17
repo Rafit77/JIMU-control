@@ -7,9 +7,11 @@ Status: complete (2025-12-17)
 - Basic manual controls: set servo position, rotate motor, read IR/ultrasonic
 
 ## Milestone 2 — “Project & model config”
-- Working all visual project features
-- Real working save / load / save as / edit / delete project functions
-- Tidy up project interface and proper tab selector
+Status: complete (2025-12-17)
+- Project save/load/edit/save-as/delete + thumbnail import
+- Project UI polish (no menu bar; compact project bar; battery indicator)
+- Proper tab selector: Model | Actions | Routines | Controller | Logs
+- Model Config saved calibration and live status colors (new/detected/missing)
 
 ## Milestone 3 — “Blockly MVP”
 - Blockly workspace embedded in app
@@ -17,12 +19,13 @@ Status: complete (2025-12-17)
 - Run/Stop controls and trace output
 
 ## Milestone 4 — “Movement”
-- Movement worskpace in app
+- Movement workspace in app
 
-## Milestone 5 — “Control panel”
+## Milestone 5 — “Controller”
 - Widgets (button/slider/joystick) + bindings
 - Keyboard/gamepad triggers routed to actions
 
 ## Milestone 6 — “Distribution”
 - Windows installer + auto-update strategy
 - Crash reporting/log export
+

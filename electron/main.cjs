@@ -229,6 +229,7 @@ const registerIpc = () => {
   });
   ipcMain.handle('jimu:disconnect', async () => {
     await jimu.disconnect();
+    sendToRenderer('jimu:disconnected');
   });
   ipcMain.handle('jimu:refreshStatus', async () => {
     return jimu.refreshStatus();

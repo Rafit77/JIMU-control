@@ -1,102 +1,99 @@
 # Model Config tab
 
-This tab is the “live hardware” surface: connect to a real JIMU brick, view detected modules, and calibrate per-module settings stored in the current project.
+This tab is the **live hardware** surface: connect to a real JIMU brick, view detected modules, and edit calibration/settings stored in the current project.
 
 ## Current behavior (as implemented)
 
 ### Connection section
-- **Scan bricks** runs a ~4s BLE scan and fills the brick selector.
+- **Scan bricks** runs a ~4s BLE scan and fills the brick selector. If the project has a saved `hardware.connectedBrick.id` and that brick is found, it is auto-selected.
 - **Connect** connects to the selected brick and runs boot (status → enable → battery), then updates:
-  - UI `status`
-  - firmware string
-  - battery voltage/charging flag
-  - detected modules stored into the current project
-- **Refresh status** re-reads status (module discovery) and updates the current project.
+  - UI connection `status`
+  - firmware string (and stores it in the project as `hardware.firmware`)
+  - battery voltage/charging flag (UI only; not stored to disk)
+  - detected modules (UI only)
+- **Refresh status** re-reads status (module discovery) and updates the UI only.
 
 Events pushed from the device:
-- `jimu:status` updates detected modules in UI and in the current project.
-- If the project already has a stored module layout and a new `status.masks` differs, UI asks: “Detected device composition change. Accept new layout?”
-- `jimu:battery` updates battery info.
-- `jimu:disconnected` resets connection state.
+- `jimu:status` updates detected modules in UI.
+- `jimu:battery` updates battery info (polled about every 30s by the SDK).
+- `jimu:disconnected` resets connection state and closes feature panels.
 
-### Live module overview
-Shows detected IDs for:
-- Servos (clickable)
-- Motors, IR, Ultrasonic, Eyes (clickable)
-- Speakers (list)
+### Live module overview (status colors)
+The overview shows the union of:
+- the saved project snapshot (`project.hardware.modules`)
+- the currently detected modules (live status)
+
+Each module ID is colored:
+- `detected` (green): saved in snapshot and detected now
+- `new` (blue): detected now but not present in the saved snapshot
+- `missing` (gray): present in the saved snapshot but not detected now
+
+Notes:
+- Missing modules are shown as disabled (not clickable).
+- Red/error state is reserved for later when Routines/Actions can reference modules.
+
+### Saving the module snapshot
+The project snapshot is updated **only on Project Save**:
+- current live modules are copied into `project.hardware.modules`
+- `missing` modules are pruned from the saved snapshot on Save
+- `new` modules are added to the saved snapshot on Save
 
 ### Servo details panel
-Clicking a servo opens a panel and requests current position.
+Clicking a detected servo opens a panel and requests current position.
 
-Servo units:
+Units:
 - UI and SDK use degrees `-120..120` (`0` center).
 
-Stored per-servo settings (in memory, per project):
-- `project.servoConfig[id]`: `mode`, `min`, `max`, `maxSpeed`, `dir`
+Stored per-servo settings (in `project.calibration.servoConfig[id]`):
+- `mode`: `servo` | `motor` | `mixed`
+- `min`, `max` (degrees)
+- `maxSpeed` (1..1000)
+- `reverse` (boolean)
 
 Positional (mode `servo` / `mixed`):
-- Touch-bar style slider `-120..120` with 3 draggable markers: `min`, `max`, and `test` (test is clamped to `[min,max]`)
-- Test position (shows selected angle)
-- Stop / release (runs `readServo` to release hold)
-- Save settings into the project
+- Touch-bar style slider `-120..120` with 3 markers: `min`, `max`, and `test` (test is clamped to `[min,max]`)
+- **Test position** sends the servo command
+- **Stop / release** runs `readServo` to release hold
+- **Save settings** writes to the project (requires Project Save to persist to disk)
 
 Rotation (mode `motor` / `mixed`):
-- Direction (`cw` / `ccw`)
-- Max speed (1..1000) and a speed slider
-- Test rotation
-- Save settings into the project
-
-## Desired behavior (not complete yet)
-
-### Composition change UX
-When rejecting a composition change:
-- Status colors (proposal):
-  - `detected` (green): in project snapshot and detected now
-  - `missing` (gray): in snapshot but not detected; safe to remove only if unused
-  - `error` (red): in snapshot, not detected, but referenced by Motions/Routines; cannot be removed silently
-  - `new` (blue): detected now but not in snapshot; blocked from use until accepted into the project
-
-When saving the project snapshot:
-- `missing` (gray) modules are deleted from the saved snapshot
-- `new` (blue) modules are added to the saved snapshot
-- `error` (red) modules stay in the saved snapshot (they are in use)
+- Direction (`cw` / `ccw`) for test rotation
+- Speed slider (0..maxSpeed)
+- **Test rotation** / **Stop**
+- **Save settings** stores `mode/maxSpeed/reverse` in the project
 
 ### Motor details panel
-Clicking a motor should open a motor panel.
+Clicking a detected motor opens a motor panel.
 
-Stored per-motor settings:
-- `project.motorConfig[id]`: `maxSpeed`
+Stored per-motor settings (in `project.calibration.motorConfig[id]`):
+- `maxSpeed` (1..150)
+- `reverse` (boolean)
 
 Motor rotation:
-- Direction (`cw` / `ccw`)
-- Max speed (1..150) and a speed slider
-- Test rotation (e.g. 5 seconds) and a Stop rotation button (speed = 0)
-- Save settings; saved limits must not be exceeded by Motions or Routines.
+- Direction (`cw` / `ccw`) for test rotation
+- Speed slider (0..maxSpeed) and duration (0..6000ms)
+- **Test rotation** and **Stop** (speed=0)
+- **Save settings** writes to the project (requires Project Save to persist to disk)
 
-Closing/changing motor:
-- Stop motor first (speed = 0).
-- If settings changed: prompt to save or discard.
+### IR / Ultrasonic panels
+Clicking any IR or Ultrasonic module opens its dedicated panel:
+- Panels poll at ~4Hz using a single in-flight request (no overlapping BLE commands).
+- Values are shown per detected sensor ID.
 
-### IR sensor panel
-Clicking any IR sensor opens an IR-only panel:
-- Poll ~5Hz and show values for all detected IR sensors (single in-flight request; no overlapping polls)
+Ultrasonic units:
+- Displayed in cm; raw `0` is treated as out-of-range and displayed as `301.0 cm`.
 
-### Ultrasonic sensor panel
-Clicking any Ultrasonic sensor opens a US-only panel:
-- Poll ~5Hz and show values for all detected Ultrasonic sensors (single in-flight request; no overlapping polls)
-- Ultrasonic shown in cm (raw `0` treated as out-of-range and displayed as `301.0 cm`)
-- Ultrasonic LED: solid color test + Off (no blinking)
-  - Uses RGB + `level` per `docs/protocol.md`.
+Ultrasonic LED:
+- Solid RGB test + **Off** (no blinking)
+- Uses protocol `0x79 0x06 ...` with fixed `level=1` internally.
 
-### Eye details panel
-Clicking an eye opens a panel for a single eye ID:
-- Full-eye solid RGB test (`setEyeColor`), Off (`setEyeOff`)
-- Simple animations (blink / pulse / rainbow) with Start/Stop controls
+### Eye panel
+Clicking an Eye opens a panel for a single eye ID:
+- Color picker and quick swatches
+- Solid RGB test and Off
+- Simple animations (blink / pulse / rainbow) with Start/Stop
 
-## Planned direction
-- Model snapshot should become part of the saved project schema: `docs/architecture/project-format.md`
-- This tab should evolve into a safety limitation and troubleshooting workspace:
-  - servo positional range limitation (model safety)
-  - servo rotation speed limitation (model safety)
-  - live sensor readouts with units/scaling
-  - motor safety limits
+## Revert behavior
+Project **Revert** reloads project data from disk and must update any open config panels:
+- servo/motor panels immediately reflect reloaded calibration values, or close if that module is no longer detected
+

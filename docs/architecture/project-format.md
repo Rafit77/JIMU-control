@@ -14,7 +14,7 @@ MyProject/
   routines/
     main.xml
     drive.xml
-  motions/
+  actions/
     wave.json
   assets/
     thumbnail.png
@@ -27,19 +27,20 @@ MyProject/
 - Model snapshot: last accepted module discovery/status
 - Calibration/settings: servo/motor limits + modes
 - Variables: initial values + types
-- Triggers: mapping of Trigger → [Routine | Motion]
+- Triggers: mapping of Trigger → [Routine | Action]
 - Control panel: grid/layout + widget definitions/bindings
 
 ## Model snapshot (from Model Config tab)
-Model Config maintains a “hardware snapshot” inside the project so the rest of the app (Motions/Routines/UI) can:
+Model Config maintains a “hardware snapshot” inside the project so the rest of the app (Actions/Routines/UI) can:
 - know which modules exist and which are currently missing
 - apply per-servo/motor limits and calibration
-- detect composition changes and require user confirmation
+- detect composition changes (current implementation uses status colors; explicit accept/reject flow is planned)
 
 Save behavior for module changes:
 - `missing` (gray): removed from the saved snapshot on Save (pruned)
 - `new` (blue): added to the saved snapshot on Save
-- `error` (red): must remain in the saved snapshot because it is referenced by Motions/Routines
+- `error` (red): must remain in the saved snapshot because it is referenced by Actions/Routines
+  - note: the `error` (red) state becomes actionable once Actions/Routines can reference modules
 
 ### Proposed fields
 - `hardware.connectedBrick`: last connected brick id/name
@@ -50,7 +51,7 @@ Save behavior for module changes:
   - `detectedStatus`: per-module status (in RAM only)
       - `detected`: in save and detected (green)
       - `missing`: in save but not detected; safe to remove only if unused (gray)
-      - `error`: in save, not detected, but used by Routines or Motions; cannot be removed (red)
+      - `error`: in save, not detected, but used by Routines or Actions; cannot be removed (red)
       - `new`: not in save but currently detected (blue)
 - `calibration.servoConfig[id]`:
   - `mode`: `servo` | `motor` | `mixed`

@@ -23,11 +23,11 @@ Placeholders for now — put real screenshots into `docs/media/screenshots/`.
 ![Project home](docs/media/screenshots/project-home.svg)
 ![Model config](docs/media/screenshots/model-config.svg)
 ![Blockly editor](docs/media/screenshots/blockly.svg)
-![Control panel](docs/media/screenshots/control-panel.svg)
+![Controller](docs/media/screenshots/control-panel.svg)
 
 ## Project status
-- **Today (works in repo):** Electron shell, BLE scan/connect, boot/status parsing, battery, basic servo/motor/sensor commands (via `jimu/`).
-- **Next (app direction):** real project home, model configuration UX, Blockly workspace with JIMU blocks, runtime scheduler (parallel actions + triggers), project save/load.
+- **Today (works in repo):** Electron shell, BLE scan/connect, boot/status parsing, battery, live Model Config panels, and real project save/load/edit (stored under `./jimu_saves/`).
+- **Next (app direction):** Actions editor + playback, Blockly Routines workspace with JIMU blocks, runtime scheduler (triggers), Controller widgets/bindings.
 - **Known gaps:** installer/packaging, full block set, simulator backend, stronger runtime sandboxing.
 
 More detail: `docs/project/status.md`

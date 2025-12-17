@@ -3,25 +3,28 @@
 This document describes the project bar and safety controls that are shared across tabs.
 
 ## Required controls (target UX)
-- **Thumbnail**: when clicked, select picture; resize to 64x64 on import and store as `assets/thumbnail.png`.
-- **Project name**
-- **Project description** (textarea)
-- **Battery indicator**: show live battery voltage and an estimated percent in the project bar (updates about every 30s); low-battery (<10%) should be shown in red.
+- **No menu bar**: project actions are accessible from the project bar (no File menu).
+- **Thumbnail**: shown on the left; edited via the **Edit project** dialog. Imported images are resized to 64x64 and stored as `assets/thumbnail.png`.
+- **Project name**: displayed as text; editable only via **Edit project**.
+- **Project description**: displayed as text; editable only via **Edit project**.
+- **Battery indicator**: shown under Emergency Stop; updates about every 30s when connected.
+  - Assumption for percent: `6.5V = 0%`, `8.4V = 100%` (linear mapping).
+  - Low battery: `<10%` shown in red; disconnected state shown in gray.
 - **Dirty state**: show unsaved changes and confirm on actions that would lose changes (close project, open another project).
 
 ### When no project is open
-- **Project picker**: list saved projects (name, short description, thumbnail)
-- **Create project**: create new project (name + optional description + thumbnail)
+- **Project picker**: list saved projects (thumbnail, name, short description) with an Open button.
+- **Create project**: opens a dialog (name + optional description), then creates on disk.
 
 ### When a project is open
-- **Close project**: if connected, stop all, turn off all LEDs, disconnect; if dirty, ask whether to save.
-- **Edit project**: change name/description/thumbnail; allows Save | Cancel | Delete.
+- **Close project**: if connected, emergency stop + turn off LEDs + disconnect; if dirty, ask whether to save.
+- **Edit project**: opens a dialog to change name/description and thumbnail; Delete is only available inside this dialog.
 - **Save**: write the current project to disk (no prompts if already has a path).
-- **Save As**: pick a new project folder/file and write to it.
+- **Save As**: clones the project into a new folder (including `assets/thumbnail.png`).
 - **Revert**: reload the project from disk; any open calibration/config panels (e.g. servo/motor) must immediately reflect the reloaded values (or be closed if the module is no longer detected).
 
 ## Project storage rules
-- Projects stored in `./jimu_saves/`
+- Projects stored in `./jimu_saves/` (one folder per project id)
 - Store the brick id/name used for the project; if the same brick is found during scan, preselect it for connect.
 - Save model snapshot + calibration:
   - Module list snapshot with IDs saved to project file
