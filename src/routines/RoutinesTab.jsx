@@ -461,6 +461,48 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       await ipc.invoke('jimu:rotateServo', { id: servoId, dir: dirByte, speed: Number(speed ?? 0), maxSpeed });
     };
 
+    const rotateServoMulti = async (ids, dir, speed) => {
+      if (!ipc) throw new Error('IPC unavailable');
+      if (isCancelled()) return;
+
+      const list = Array.isArray(ids) ? ids.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0) : [];
+      if (!list.length) return;
+
+      const cleanDir = String(dir) === 'ccw' ? 'ccw' : 'cw';
+      const cfg = calibration?.servoConfig || {};
+
+      // Partition IDs into cw/ccw after applying per-servo reverse calibration.
+      const cwIds = [];
+      const ccwIds = [];
+      for (const servoId of list) {
+        const c = cfg?.[servoId] || cfg?.[String(servoId)] || {};
+        const reverse = Boolean(c.reverse);
+        const finalDir = reverse ? (cleanDir === 'cw' ? 'ccw' : 'cw') : cleanDir;
+        if (finalDir === 'cw') cwIds.push(servoId);
+        else ccwIds.push(servoId);
+      }
+
+      const sendGroup = async (groupIds, dirByte) => {
+        if (!groupIds.length) return;
+        // Clamp speed to the most restrictive maxSpeed in this group.
+        let groupMax = 1000;
+        for (const servoId of groupIds) {
+          const c = cfg?.[servoId] || cfg?.[String(servoId)] || {};
+          const maxSpeed = typeof c.maxSpeed === 'number' ? c.maxSpeed : 1000;
+          groupMax = Math.min(groupMax, maxSpeed);
+        }
+        const cleanSpeed = Math.max(0, Math.min(groupMax, Number(speed ?? 0)));
+        // Protocol observed up to 6 IDs per rotation command; chunk to be safe.
+        for (let i = 0; i < groupIds.length; i += 6) {
+          const chunk = groupIds.slice(i, i + 6);
+          await ipc.invoke('jimu:rotateServoMulti', { ids: chunk, dir: dirByte, speed: cleanSpeed, maxSpeed: groupMax });
+        }
+      };
+
+      await sendGroup(cwIds, 0x01);
+      await sendGroup(ccwIds, 0x02);
+    };
+
     const stopServo = async (id) => {
       if (!ipc) throw new Error('IPC unavailable');
       if (isCancelled()) return;
@@ -722,6 +764,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       setServoPositionsTimed,
       setServoPositionTimed,
       rotateServo,
+      rotateServoMulti,
       stopServo,
       rotateMotor,
       stopMotor,

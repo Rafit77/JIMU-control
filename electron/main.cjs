@@ -460,6 +460,11 @@ const registerIpc = () => {
     const lim = Math.max(0, Math.min(maxSpeed, speed ?? 0));
     return jimu.rotateServo(id, dir, lim);
   });
+  ipcMain.handle('jimu:rotateServoMulti', async (_evt, { ids, dir, speed, maxSpeed = 1000 }) => {
+    const lim = Math.max(0, Math.min(maxSpeed, speed ?? 0));
+    const list = Array.isArray(ids) ? ids : [];
+    return jimu.rotateServos(list, dir, lim);
+  });
   ipcMain.handle('jimu:rotateMotor', async (_evt, { id, dir = 'cw', speed = 0, maxSpeed = 150, durationMs = 1000 }) => {
     const lim = Math.max(0, Math.min(maxSpeed, Math.round(speed ?? 0)));
     const signed = dir === 'ccw' ? -lim : lim;

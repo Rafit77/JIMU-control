@@ -439,10 +439,17 @@ export class Jimu extends EventEmitter {
   }
 
   async rotateServo(id, direction, velocity) {
+    return this.rotateServos([id], direction, velocity);
+  }
+
+  async rotateServos(ids, direction, velocity) {
+    const list = Array.isArray(ids) ? ids.map((x) => clampByte(x)).filter((x) => x > 0) : [];
+    if (!list.length) throw new Error('No servo ids provided');
+    if (list.length > 6) throw new Error('rotateServos supports up to 6 ids per command');
     const vel = Math.max(0, Math.min(0xffff, velocity || 0));
     const hi = (vel >> 8) & 0xff;
     const lo = vel & 0xff;
-    await this._send([0x07, 0x01, id, direction, hi, lo]);
+    await this._send([0x07, clampByte(list.length), ...list, clampByte(direction), hi, lo]);
   }
 
   async readServoPosition(id = 0, { timeoutMs = 1200 } = {}) {

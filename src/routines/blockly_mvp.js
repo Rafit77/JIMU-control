@@ -348,22 +348,148 @@ const defineBlocksOnce = (() => {
 
     Blockly.Blocks.jimu_rotate_servo = {
       init() {
-        this.appendDummyInput()
+        this.setColour(200);
+        this.setPreviousStatement(true);
+        this.setNextStatement(true);
+        this.setTooltip(
+          'Rotate one or more continuous-rotation servos (motor mode). Direction and speed are shared; IDs are sent in as few commands as possible.',
+        );
+        this.itemCount_ = 1;
+        this.appendDummyInput('TITLE')
           .appendField('rotate servo')
-          .appendField(makeIdDropdown('servoRotate'), 'ID')
           .appendField(
             new Blockly.FieldDropdown([
               ['cw', 'cw'],
               ['ccw', 'ccw'],
             ]),
             'DIR',
-          )
-          .appendField('speed');
-        this.appendValueInput('SPEED').setCheck('Number');
+          );
+        this.setMutator(new Blockly.icons.MutatorIcon(['jimu_rotate_servo_item'], this));
+        this.updateShape_();
+      },
+      saveExtraState() {
+        return { itemCount: this.itemCount_ };
+      },
+      loadExtraState(state) {
+        const n = Number(state?.itemCount ?? 1);
+        this.itemCount_ = Number.isFinite(n) && n > 0 ? Math.min(8, Math.floor(n)) : 1;
+        this.updateShape_();
+      },
+      decompose(workspace) {
+        const container = workspace.newBlock('jimu_rotate_servo_container');
+        container.initSvg();
+        let conn = container.getInput('STACK').connection;
+        for (let i = 0; i < this.itemCount_; i += 1) {
+          const item = workspace.newBlock('jimu_rotate_servo_item');
+          item.initSvg();
+          conn.connect(item.previousConnection);
+          conn = item.nextConnection;
+        }
+        return container;
+      },
+      compose(container) {
+        const oldIds = [];
+        for (let i = 0; i < this.itemCount_; i += 1) oldIds.push(this.getFieldValue(`ID${i}`));
+
+        const items = [];
+        let item = container.getInputTargetBlock('STACK');
+        while (item) {
+          items.push(item);
+          item = item.nextConnection && item.nextConnection.targetBlock();
+        }
+
+        this.itemCount_ = Math.max(1, Math.min(8, items.length || 1));
+        this.updateShape_();
+
+        for (let i = 0; i < this.itemCount_; i += 1) {
+          if (oldIds[i] != null && this.getField(`ID${i}`)) this.setFieldValue(oldIds[i], `ID${i}`);
+        }
+      },
+      updateWarning_() {
+        const ids = [];
+        for (let idx = 0; idx < this.itemCount_; idx += 1) ids.push(String(this.getFieldValue(`ID${idx}`) ?? ''));
+        const clean = ids.filter((x) => x && x !== '0');
+        const dup = clean.length !== new Set(clean).size;
+        this.setWarningText(dup ? 'Duplicate servo IDs: each row should target a different servo.' : null);
+      },
+      onchange(e) {
+        if (!this.workspace || this.workspace.isFlyout) return;
+        if (!e || e.blockId !== this.id) {
+          this.updateWarning_();
+          return;
+        }
+        if (e.type === Blockly.Events.BLOCK_CHANGE && typeof e.name === 'string' && e.name.startsWith('ID')) {
+          this.updateWarning_();
+          return;
+        }
+        if (e.type === Blockly.Events.BLOCK_CHANGE && e.element === 'mutation') {
+          this.updateWarning_();
+          return;
+        }
+      },
+      updateShape_() {
+        // Remove existing ID inputs
+        let i = 0;
+        while (this.getInput(`ROW${i}`)) {
+          this.removeInput(`ROW${i}`);
+          i += 1;
+        }
+        if (this.getInput('SPEED')) this.removeInput('SPEED');
+
+        const makeDistinctIdValidator = (idx, field) => {
+          return (newValue) => {
+            const all = getNumericIdOptions('servoRotate');
+            if (!all.length) return newValue;
+            const next = String(newValue ?? '');
+            if (!next || next === '0') return next;
+
+            let countSame = 0;
+            const used = new Set();
+            for (let j = 0; j < this.itemCount_; j += 1) {
+              const v = j === idx ? next : String(this.getFieldValue(`ID${j}`) ?? '');
+              if (v === next) countSame += 1;
+              if (v && v !== '0') used.add(v);
+            }
+            if (countSame <= 1) return next;
+
+            for (const id of all) {
+              const s = String(id);
+              if (!used.has(s)) return s;
+            }
+            return String(field.getValue() ?? next);
+          };
+        };
+
+        for (let idx = 0; idx < this.itemCount_; idx += 1) {
+          const row = this.appendDummyInput(`ROW${idx}`).appendField(makeIdDropdown('servoRotate'), `ID${idx}`);
+          if (idx === 0) row.appendField('<');
+          const idField = this.getField(`ID${idx}`);
+          if (idField && typeof idField.setValidator === 'function') {
+            idField.setValidator(makeDistinctIdValidator(idx, idField));
+          }
+        }
+
+        const speedInput = this.appendValueInput('SPEED').setCheck('Number').appendField('speed');
+        speedInput.connection?.setShadowState({ type: 'math_number', fields: { NUM: 0 } });
+        this.updateWarning_();
+      },
+    };
+
+    Blockly.Blocks.jimu_rotate_servo_container = {
+      init() {
+        this.appendDummyInput().appendField('servos');
+        this.appendStatementInput('STACK');
+        this.setColour(200);
+        this.contextMenu = false;
+      },
+    };
+    Blockly.Blocks.jimu_rotate_servo_item = {
+      init() {
+        this.appendDummyInput().appendField('servo');
         this.setPreviousStatement(true);
         this.setNextStatement(true);
         this.setColour(200);
-        this.setTooltip('Rotate a continuous-rotation servo (motor mode). Speed is clamped to calibration maxSpeed.');
+        this.contextMenu = false;
       },
     };
 
@@ -586,10 +712,14 @@ const defineBlocksOnce = (() => {
       return `await api.stopMotor(${id});\n`;
     };
     javascriptGenerator.forBlock.jimu_rotate_servo = (block) => {
-      const id = Number(block.getFieldValue('ID') || 0);
       const dir = String(block.getFieldValue('DIR') || 'cw');
       const speed = javascriptGenerator.valueToCode(block, 'SPEED', javascriptGenerator.ORDER_NONE) || '0';
-      return `await api.rotateServo(${id}, ${JSON.stringify(dir)}, ${speed});\n`;
+      const ids = [];
+      for (let i = 0; block.getField(`ID${i}`); i += 1) {
+        const id = Number(block.getFieldValue(`ID${i}`) || 0);
+        if (id) ids.push(id);
+      }
+      return `await api.rotateServoMulti(${JSON.stringify(ids)}, ${JSON.stringify(dir)}, ${speed});\n`;
     };
     javascriptGenerator.forBlock.jimu_stop_servo = (block) => {
       const id = Number(block.getFieldValue('ID') || 0);
@@ -794,7 +924,7 @@ export const getBlocklyToolbox = () => {
               DUR: { shadow: { type: 'math_number', fields: { NUM: 80 } } },
             },
           },
-          { kind: 'block', type: 'jimu_rotate_servo', inputs: { SPEED: { shadow: { type: 'math_number', fields: { NUM: 500 } } } } },
+          { kind: 'block', type: 'jimu_rotate_servo', inputs: { SPEED: { shadow: { type: 'math_number', fields: { NUM: 0 } } } } },
           { kind: 'block', type: 'jimu_stop_servo' },
           {
             kind: 'block',

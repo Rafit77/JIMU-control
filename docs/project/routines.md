@@ -114,8 +114,10 @@ Notes:
   - Sends one `0x09` “Servo positions” command for all selected servos (clamped by calibration min/max + reverse), then waits `[duration ms]`.
   - Duration mapping: device `speed` byte uses `speed/20 = seconds` so `speed ~= durationMs/50` (rounded, clamped to `0..255`).
 - `rotate servo [id] [cw/ccw] speed [x]` (`jimu_rotate_servo`)
-  - For continuous rotation (servo motor mode).
-  - Speed is clamped using calibration `maxSpeed` + `reverse`.
+  - Mutator block: add/remove servo ID rows (IDs must be distinct).
+  - For continuous rotation (servo motor/mixed mode). Direction + speed are shared.
+  - Speed is clamped using the most restrictive calibration `maxSpeed` in each direction group.
+  - If some servos have `reverse=true`, the implementation splits the command into CW and CCW groups.
 - `stop servo [id]` (`jimu_stop_servo`): best-effort stop for continuous rotation.
 - `rotate motor [id] [cw/ccw] speed [x] duration [ms]` (`jimu_rotate_motor`)
   - Duration is clamped by the device layer to `0..6000ms`.
