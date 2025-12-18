@@ -456,9 +456,12 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       const maxSpeed = typeof c.maxSpeed === 'number' ? c.maxSpeed : 1000;
       const reverse = Boolean(c.reverse);
       const cleanDir = String(dir) === 'ccw' ? 'ccw' : 'cw';
-      const finalDir = reverse ? (cleanDir === 'cw' ? 'ccw' : 'cw') : cleanDir;
+      const speedNum = Number(speed ?? 0);
+      const baseDir = speedNum < 0 ? (cleanDir === 'cw' ? 'ccw' : 'cw') : cleanDir;
+      const baseSpeed = Math.abs(speedNum);
+      const finalDir = reverse ? (baseDir === 'cw' ? 'ccw' : 'cw') : baseDir;
       const dirByte = finalDir === 'cw' ? 0x01 : 0x02;
-      await ipc.invoke('jimu:rotateServo', { id: servoId, dir: dirByte, speed: Number(speed ?? 0), maxSpeed });
+      await ipc.invoke('jimu:rotateServo', { id: servoId, dir: dirByte, speed: baseSpeed, maxSpeed });
     };
 
     const rotateServoMulti = async (ids, dir, speed) => {
@@ -469,7 +472,19 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       if (!list.length) return;
 
       const cleanDir = String(dir) === 'ccw' ? 'ccw' : 'cw';
+      const speedNum = Number(speed ?? 0);
+      const baseDir = speedNum < 0 ? (cleanDir === 'cw' ? 'ccw' : 'cw') : cleanDir;
+      const baseSpeedRaw = Math.abs(speedNum);
       const cfg = calibration?.servoConfig || {};
+
+      // Clamp speed to the most restrictive maxSpeed among ALL selected servos.
+      let globalMax = 1000;
+      for (const servoId of list) {
+        const c = cfg?.[servoId] || cfg?.[String(servoId)] || {};
+        const maxSpeed = typeof c.maxSpeed === 'number' ? c.maxSpeed : 1000;
+        globalMax = Math.min(globalMax, maxSpeed);
+      }
+      const baseSpeed = Math.max(0, Math.min(globalMax, baseSpeedRaw));
 
       // Partition IDs into cw/ccw after applying per-servo reverse calibration.
       const cwIds = [];
@@ -477,25 +492,17 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       for (const servoId of list) {
         const c = cfg?.[servoId] || cfg?.[String(servoId)] || {};
         const reverse = Boolean(c.reverse);
-        const finalDir = reverse ? (cleanDir === 'cw' ? 'ccw' : 'cw') : cleanDir;
+        const finalDir = reverse ? (baseDir === 'cw' ? 'ccw' : 'cw') : baseDir;
         if (finalDir === 'cw') cwIds.push(servoId);
         else ccwIds.push(servoId);
       }
 
       const sendGroup = async (groupIds, dirByte) => {
         if (!groupIds.length) return;
-        // Clamp speed to the most restrictive maxSpeed in this group.
-        let groupMax = 1000;
-        for (const servoId of groupIds) {
-          const c = cfg?.[servoId] || cfg?.[String(servoId)] || {};
-          const maxSpeed = typeof c.maxSpeed === 'number' ? c.maxSpeed : 1000;
-          groupMax = Math.min(groupMax, maxSpeed);
-        }
-        const cleanSpeed = Math.max(0, Math.min(groupMax, Number(speed ?? 0)));
         // Protocol observed up to 6 IDs per rotation command; chunk to be safe.
         for (let i = 0; i < groupIds.length; i += 6) {
           const chunk = groupIds.slice(i, i + 6);
-          await ipc.invoke('jimu:rotateServoMulti', { ids: chunk, dir: dirByte, speed: cleanSpeed, maxSpeed: groupMax });
+          await ipc.invoke('jimu:rotateServoMulti', { ids: chunk, dir: dirByte, speed: baseSpeed, maxSpeed: globalMax });
         }
       };
 
