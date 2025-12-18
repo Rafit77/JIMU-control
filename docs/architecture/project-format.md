@@ -29,6 +29,7 @@ MyProject/
 - Variables: initial values + types
 - Triggers: mapping of Trigger → [Routine | Action]
 - Control panel: grid/layout + widget definitions/bindings
+- Routines: list of `{ id, name, createdAt, updatedAt }` (XML lives in `routines/<id>.xml`)
 
 ## Model snapshot (from Model Config tab)
 Model Config maintains a “hardware snapshot” inside the project so the rest of the app (Actions/Routines/UI) can:

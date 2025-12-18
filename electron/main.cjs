@@ -1,6 +1,7 @@
 const electron = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 
 const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, globalShortcut } = electron;
@@ -24,6 +25,18 @@ const safeName = (name) =>
     .slice(0, 64) || 'Project';
 
 const getSavesRoot = () => path.join(app.getAppPath(), 'jimu_saves');
+const getProjectDir = (projectId) => path.join(getSavesRoot(), projectId);
+const getRoutinesDir = (projectId) => path.join(getProjectDir(projectId), 'routines');
+const getRoutinePath = (projectId, routineId) => path.join(getRoutinesDir(projectId), `${routineId}.xml`);
+
+const defaultRoutineXml = () => '<xml xmlns="https://developers.google.com/blockly/xml"></xml>\n';
+const newId = () => {
+  try {
+    return crypto.randomUUID();
+  } catch (_) {
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+};
 
 const ensureDir = async (dir) => {
   await fs.mkdir(dir, { recursive: true });
@@ -91,6 +104,7 @@ const createProject = async ({ name, description }) => {
   const projectDir = path.join(root, id);
   await ensureDir(projectDir);
   await ensureDir(path.join(projectDir, 'assets'));
+  await ensureDir(path.join(projectDir, 'routines'));
   const data = {
     schemaVersion: 1,
     name: safeName(name),
@@ -106,6 +120,7 @@ const createProject = async ({ name, description }) => {
       servoConfig: {},
       motorConfig: {},
     },
+    routines: [],
   };
   await writeJson(path.join(projectDir, 'project.json'), data);
   return loadProject(id);
@@ -116,12 +131,95 @@ const saveProject = async ({ id, data }) => {
   const projectDir = path.join(root, id);
   await ensureDir(projectDir);
   await ensureDir(path.join(projectDir, 'assets'));
+  await ensureDir(path.join(projectDir, 'routines'));
   const now = new Date().toISOString();
   const next = { ...(data || {}), updatedAt: now };
   if (!next.createdAt) next.createdAt = now;
   if (!next.schemaVersion) next.schemaVersion = 1;
   await writeJson(path.join(projectDir, 'project.json'), next);
   return loadProject(id);
+};
+
+const listRoutines = async (projectId) => {
+  const data = await readJson(path.join(getProjectDir(projectId), 'project.json'));
+  const routines = Array.isArray(data?.routines) ? data.routines : [];
+  return routines.map((r) => ({
+    id: String(r?.id || ''),
+    name: String(r?.name || ''),
+    createdAt: r?.createdAt || null,
+    updatedAt: r?.updatedAt || null,
+  }));
+};
+
+const saveRoutineList = async (projectId, updater) => {
+  const projectDir = getProjectDir(projectId);
+  const projectJson = path.join(projectDir, 'project.json');
+  const data = await readJson(projectJson);
+  const now = new Date().toISOString();
+  const routines = Array.isArray(data?.routines) ? data.routines : [];
+  const nextRoutines = updater(routines, now);
+  const next = { ...(data || {}), routines: nextRoutines, updatedAt: now };
+  await writeJson(projectJson, next);
+  return nextRoutines;
+};
+
+const createRoutine = async (projectId, { name } = {}) => {
+  const id = newId();
+  const now = new Date().toISOString();
+  const routineName = safeName(name || 'Routine');
+  await ensureDir(getRoutinesDir(projectId));
+  await fs.writeFile(getRoutinePath(projectId, id), defaultRoutineXml(), 'utf8');
+
+  const routines = await saveRoutineList(projectId, (prev) => [
+    ...(prev || []),
+    { id, name: routineName, createdAt: now, updatedAt: now },
+  ]);
+
+  return { ok: true, routine: routines.find((r) => String(r.id) === String(id)) || { id, name: routineName } };
+};
+
+const renameRoutine = async (projectId, routineId, nextName) => {
+  const routineName = safeName(nextName || '');
+  if (!routineName) throw new Error('Routine name is required');
+  const routines = await saveRoutineList(projectId, (prev, now) => {
+    const list = (prev || []).map((r) => ({ ...(r || {}) }));
+    const idx = list.findIndex((r) => String(r.id) === String(routineId));
+    if (idx < 0) throw new Error('Routine not found');
+    if (list.some((r, i) => i !== idx && String(r?.name || '') === routineName)) {
+      throw new Error('Routine name must be unique');
+    }
+    list[idx].name = routineName;
+    list[idx].updatedAt = now;
+    return list;
+  });
+  return { ok: true, routine: routines.find((r) => String(r.id) === String(routineId)) || null };
+};
+
+const deleteRoutine = async (projectId, routineId) => {
+  await saveRoutineList(projectId, (prev) => (prev || []).filter((r) => String(r?.id) !== String(routineId)));
+  try {
+    await fs.rm(getRoutinePath(projectId, routineId), { force: true });
+  } catch (_) {
+    // ignore
+  }
+  return { ok: true };
+};
+
+const loadRoutineXml = async (projectId, routineId) => {
+  try {
+    return await fs.readFile(getRoutinePath(projectId, routineId), 'utf8');
+  } catch (_) {
+    return defaultRoutineXml();
+  }
+};
+
+const saveRoutineXml = async (projectId, routineId, xml) => {
+  await ensureDir(getRoutinesDir(projectId));
+  await fs.writeFile(getRoutinePath(projectId, routineId), String(xml || defaultRoutineXml()), 'utf8');
+  await saveRoutineList(projectId, (prev, now) =>
+    (prev || []).map((r) => (String(r?.id) === String(routineId) ? { ...(r || {}), updatedAt: now } : r)),
+  );
+  return { ok: true };
 };
 
 const cloneProject = async ({ fromId, name, description }) => {
@@ -224,6 +322,35 @@ const registerIpc = () => {
     const png = resized.toPNG();
     await fs.writeFile(path.join(projectDir, 'assets', 'thumbnail.png'), png);
     return { ok: true, thumbnailDataUrl: toDataUrlPng(png) };
+  });
+
+  ipcMain.handle('routine:list', async (_evt, { projectId } = {}) => {
+    if (!projectId) throw new Error('projectId is required');
+    return listRoutines(projectId);
+  });
+  ipcMain.handle('routine:create', async (_evt, { projectId, name } = {}) => {
+    if (!projectId) throw new Error('projectId is required');
+    return createRoutine(projectId, { name });
+  });
+  ipcMain.handle('routine:rename', async (_evt, { projectId, routineId, name } = {}) => {
+    if (!projectId) throw new Error('projectId is required');
+    if (!routineId) throw new Error('routineId is required');
+    return renameRoutine(projectId, routineId, name);
+  });
+  ipcMain.handle('routine:delete', async (_evt, { projectId, routineId } = {}) => {
+    if (!projectId) throw new Error('projectId is required');
+    if (!routineId) throw new Error('routineId is required');
+    return deleteRoutine(projectId, routineId);
+  });
+  ipcMain.handle('routine:loadXml', async (_evt, { projectId, routineId } = {}) => {
+    if (!projectId) throw new Error('projectId is required');
+    if (!routineId) throw new Error('routineId is required');
+    return { ok: true, xml: await loadRoutineXml(projectId, routineId) };
+  });
+  ipcMain.handle('routine:saveXml', async (_evt, { projectId, routineId, xml } = {}) => {
+    if (!projectId) throw new Error('projectId is required');
+    if (!routineId) throw new Error('routineId is required');
+    return saveRoutineXml(projectId, routineId, xml);
   });
 
   ipcMain.handle('jimu:scan', async () => {

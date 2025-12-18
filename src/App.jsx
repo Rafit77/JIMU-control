@@ -1,8 +1,9 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import * as Slider from '@radix-ui/react-slider';
+import RoutinesTab from './routines/RoutinesTab.jsx';
 
-const Section = ({ title, children }) => (
-  <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 12, marginBottom: 12 }}>
+const Section = ({ title, children, style }) => (
+  <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 12, marginBottom: 12, ...(style || {}) }}>
     {title ? <h2 style={{ margin: '0 0 8px 0' }}>{title}</h2> : null}
     {children}
   </div>
@@ -264,6 +265,7 @@ export default function App() {
     }
   }, []);
   const eyeAnimCancelRef = useRef(null);
+  const routinesRef = useRef(null);
 
   const addLog = useCallback((msg) => {
     setLog((prev) => [`${new Date().toLocaleTimeString()} ${msg}`, ...prev].slice(0, 200));
@@ -760,6 +762,11 @@ export default function App() {
   };
 
   const handleCloseProject = async () => {
+    if (tab === 'routines' && routinesRef.current?.confirmCanLeave) {
+      const ok = await routinesRef.current.confirmCanLeave();
+      if (!ok) return;
+      await routinesRef.current.stopIfRunning?.();
+    }
     await turnOffUltrasonicLeds(modules?.ultrasonic);
     if (isDirty) {
       const save = window.confirm('You have unsaved changes. Save now?');
@@ -825,7 +832,17 @@ export default function App() {
   };
 
   return (
-    <div style={{ fontFamily: 'Segoe UI, sans-serif', padding: 12, width: '100%', boxSizing: 'border-box' }}>
+    <div
+      style={{
+        fontFamily: 'Segoe UI, sans-serif',
+        padding: 12,
+        width: '100%',
+        boxSizing: 'border-box',
+        minHeight: 'calc(100vh - 24px)',
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
 
       <Section>
         <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
@@ -1080,12 +1097,17 @@ export default function App() {
           <div style={{ color: '#777' }}>Use the controls above to create or open a project.</div>
         </Section>
       ) : (
-        <>
+        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
           <div style={{ display: 'flex', gap: 8, marginBottom: 12, width: '100%' }}>
             {['model', 'actions', 'routines', 'controller', 'logs'].map((t) => (
               <button
                 key={t}
                 onClick={async () => {
+                  if (tab === 'routines' && t !== 'routines' && routinesRef.current?.confirmCanLeave) {
+                    const ok = await routinesRef.current.confirmCanLeave();
+                    if (!ok) return;
+                    await routinesRef.current.stopIfRunning?.();
+                  }
                   await closeServoPanel();
                   await closeMotorPanel();
                   await closeEyePanel();
@@ -2319,8 +2341,17 @@ export default function App() {
           )}
 
           {tab === 'routines' && (
-            <Section title="Routines (placeholder)">
-              <div style={{ color: '#777' }}>Blockly editor integration will live here.</div>
+            <Section style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', marginBottom: 0 }}>
+              <RoutinesTab
+                ref={routinesRef}
+                ipc={ipc}
+                projectId={currentProject?.id}
+                status={status}
+                selectedBrickId={selectedBrickId}
+                connectToSelectedBrick={handleConnect}
+                calibration={currentProject?.data?.calibration || {}}
+                addLog={addLog}
+              />
             </Section>
           )}
 
@@ -2344,7 +2375,7 @@ export default function App() {
               </div>
             </Section>
           )}
-        </>
+        </div>
       )}
     </div>
   );

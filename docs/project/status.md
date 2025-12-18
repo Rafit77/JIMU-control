@@ -11,9 +11,13 @@
   - Servo calibration + motor calibration saved to project
   - IR/Ultrasonic panels + LED controls
   - Eye panel with color picker + simple animations
+- Routines tab (Blockly MVP):
+  - Routine list: create/open/rename/delete
+  - Blockly editor with toolbox, variables dialog, trace output
+  - Run/Stop (cancellable) using IPC-only device API
+  - Routines persisted as `routines/<id>.xml`
 
-## What’s planned next
-- Blockly integration and a minimal block set (Routines tab)
+## What's planned next
 - Action editor (pose-sequence timeline) and playback
 - Controller widgets and bindings
 - Packaging/installer for Windows
@@ -22,4 +26,3 @@
 - BLE reliability across adapters/drivers (timing/backpressure matters)
 - Completing protocol coverage for all modules and commands
 - Maintaining safety limits to protect hardware during experiments
-

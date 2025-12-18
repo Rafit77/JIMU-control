@@ -14,9 +14,11 @@ Status: complete (2025-12-17)
 - Model Config saved calibration and live status colors (new/detected/missing)
 
 ## Milestone 3 — “Blockly MVP”
-- Blockly workspace embedded in app
-- Blocks: connect, wait, variables, if/loop, servo position, motor rotate, sensor read
+Status: implemented (2025-12-18)
+- Blockly workspace embedded in app (Routines tab)
+- Block set MVP: connect, wait, variables, if/loop, servo position, motor rotate, sensor read
 - Run/Stop controls and trace output
+- Specification: `docs/project/routines.md`
 
 ## Milestone 4 — “Movement”
 - Movement workspace in app
@@ -28,4 +30,3 @@ Status: complete (2025-12-17)
 ## Milestone 6 — “Distribution”
 - Windows installer + auto-update strategy
 - Crash reporting/log export
-

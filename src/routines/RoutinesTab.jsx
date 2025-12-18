@@ -1,0 +1,643 @@
+import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import * as Blockly from 'blockly';
+import { createWorkspace, workspaceToAsyncJs, workspaceToXmlText } from './blockly_mvp.js';
+
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+const RoutineNameDialog = ({ open, title, initialName, onCancel, onSubmit }) => {
+  const [name, setName] = useState(initialName || '');
+  useEffect(() => setName(initialName || ''), [initialName, open]);
+  if (!open) return null;
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.35)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 9999,
+      }}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onCancel();
+      }}
+    >
+      <div style={{ background: '#fff', padding: 16, borderRadius: 10, width: 440, maxWidth: '92vw' }}>
+        <h3 style={{ marginTop: 0 }}>{title}</h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <label>
+            Name
+            <input
+              style={{ width: '100%', padding: 8, boxSizing: 'border-box' }}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoFocus
+            />
+          </label>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+          <button onClick={onCancel}>Cancel</button>
+          <button
+            onClick={() => onSubmit(name)}
+            style={{ background: '#0057d8', color: '#fff', border: '1px solid #0b3d91' }}
+          >
+            OK
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const VariablesDialog = ({ open, workspace, onClose }) => {
+  const [newName, setNewName] = useState('');
+  const vars = useMemo(() => {
+    if (!workspace) return [];
+    return workspace.getAllVariables().map((v) => ({ id: v.getId(), name: v.name, type: v.type }));
+  }, [workspace, open]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.35)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 9999,
+      }}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div style={{ background: '#fff', padding: 16, borderRadius: 10, width: 560, maxWidth: '94vw' }}>
+        <h3 style={{ marginTop: 0 }}>Variables</h3>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input
+            placeholder="New variable name"
+            style={{ flex: 1, padding: 8 }}
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+          />
+          <button
+            onClick={() => {
+              if (!workspace) return;
+              const n = String(newName || '').trim();
+              if (!n) return;
+              if (workspace.getVariable(n)) return;
+              workspace.createVariable(n);
+              setNewName('');
+            }}
+          >
+            Create
+          </button>
+        </div>
+        <div style={{ marginTop: 12, border: '1px solid #ddd', borderRadius: 8, overflow: 'hidden' }}>
+          {vars.length === 0 ? (
+            <div style={{ padding: 12, color: '#777' }}>No variables.</div>
+          ) : (
+            vars.map((v) => (
+              <div
+                key={v.id}
+                style={{ display: 'flex', gap: 8, alignItems: 'center', padding: 8, borderTop: '1px solid #eee' }}
+              >
+                <span style={{ width: 18, textAlign: 'right', color: '#999' }}>•</span>
+                <input
+                  style={{ flex: 1, padding: 6 }}
+                  value={v.name}
+                  onChange={(e) => {
+                    if (!workspace) return;
+                    const next = String(e.target.value || '').trim();
+                    if (!next) return;
+                    try {
+                      workspace.renameVariableById(v.id, next);
+                    } catch (_) {
+                      // ignore (duplicate etc)
+                    }
+                  }}
+                />
+                <button
+                  onClick={() => {
+                    if (!workspace) return;
+                    const ok = window.confirm(`Delete variable "${v.name}"?`);
+                    if (!ok) return;
+                    try {
+                      workspace.deleteVariableById(v.id);
+                    } catch (_) {
+                      // ignore
+                    }
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
+          <button onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const RoutinesTab = forwardRef(function RoutinesTab(
+  { ipc, projectId, status, selectedBrickId, connectToSelectedBrick, calibration, addLog },
+  ref,
+) {
+  const [routines, setRoutines] = useState([]);
+  const [editorRoutine, setEditorRoutine] = useState(null); // {id,name}
+  const [editorXml, setEditorXml] = useState('');
+  const [editorDirty, setEditorDirty] = useState(false);
+  const [runState, setRunState] = useState('idle'); // idle|running|stopped|error
+  const [runError, setRunError] = useState(null);
+  const [trace, setTrace] = useState([]);
+  const [workspaceError, setWorkspaceError] = useState(null);
+  const [workspaceReady, setWorkspaceReady] = useState(false);
+  const [nameDialog, setNameDialog] = useState({ open: false, mode: 'create', routineId: null, initialName: '' });
+  const [varsOpen, setVarsOpen] = useState(false);
+
+  const workspaceRef = useRef(null);
+  const hostRef = useRef(null);
+  const cancelRef = useRef({ cancel: () => {} });
+
+  const refreshList = useCallback(async () => {
+    if (!ipc || !projectId) return;
+    const list = await ipc.invoke('routine:list', { projectId });
+    setRoutines(Array.isArray(list) ? list : []);
+  }, [ipc, projectId]);
+
+  useEffect(() => {
+    refreshList().catch(() => {});
+  }, [refreshList]);
+
+  const loadRoutine = useCallback(
+    async (routine) => {
+      if (!ipc || !projectId) return;
+      const res = await ipc.invoke('routine:loadXml', { projectId, routineId: routine.id });
+      setEditorRoutine({ id: routine.id, name: routine.name });
+      setEditorXml(String(res?.xml || ''));
+      setEditorDirty(false);
+      setRunState('idle');
+      setRunError(null);
+      setTrace([]);
+    },
+    [ipc, projectId],
+  );
+
+  const saveRoutine = useCallback(async () => {
+    if (!ipc || !projectId || !editorRoutine) return;
+    const ws = workspaceRef.current;
+    const xml = ws ? workspaceToXmlText(ws) : editorXml;
+    await ipc.invoke('routine:saveXml', { projectId, routineId: editorRoutine.id, xml });
+    setEditorDirty(false);
+    await refreshList();
+    addLog?.(`Routine saved: ${editorRoutine.name}`);
+  }, [ipc, projectId, editorRoutine, editorXml, refreshList, addLog]);
+
+  const confirmLeaveEditor = useCallback(async () => {
+    if (!editorRoutine) return true;
+    if (!editorDirty) return true;
+    const save = window.confirm('Routine has unsaved changes. Save now?');
+    if (save) {
+      try {
+        await saveRoutine();
+        return true;
+      } catch (e) {
+        addLog?.(`Routine save failed: ${e?.message || String(e)}`);
+        return false;
+      }
+    }
+    const discard = window.confirm('Discard changes?');
+    return discard;
+  }, [editorRoutine, editorDirty, saveRoutine, addLog]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      confirmCanLeave: () => confirmLeaveEditor(),
+      stopIfRunning: async () => {
+        if (runState === 'running') await cancelRef.current.cancel?.();
+      },
+    }),
+    [confirmLeaveEditor, runState],
+  );
+
+  useEffect(() => {
+    if (!editorRoutine) return;
+    if (!hostRef.current) return;
+
+    setWorkspaceError(null);
+    setWorkspaceReady(false);
+    hostRef.current.innerHTML = '';
+    const div = document.createElement('div');
+    div.style.width = '100%';
+    div.style.height = '100%';
+    div.style.position = 'absolute';
+    div.style.inset = '0';
+    hostRef.current.appendChild(div);
+
+    let ws = null;
+    try {
+      ws = createWorkspace(div, { initialXmlText: editorXml });
+      workspaceRef.current = ws;
+      setWorkspaceReady(true);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          try {
+            Blockly.svgResize(ws);
+          } catch (_) {
+            // ignore
+          }
+        });
+      });
+    } catch (e) {
+      setWorkspaceError(e?.message || String(e));
+      setWorkspaceReady(false);
+      workspaceRef.current = null;
+    }
+
+    if (!ws) return;
+    const onChange = (evt) => {
+      if (!evt) return;
+      if (evt.isUiEvent) return;
+      if (evt.type === Blockly.Events.FINISHED_LOADING) return;
+      setEditorDirty(true);
+    };
+    ws.addChangeListener(onChange);
+
+    return () => {
+      try {
+        ws?.removeChangeListener?.(onChange);
+        ws?.dispose?.();
+      } catch (_) {
+        // ignore
+      }
+      workspaceRef.current = null;
+    };
+  }, [editorRoutine?.id]); // re-create workspace when switching routine
+
+  useEffect(() => {
+    if (!editorRoutine) return;
+    const host = hostRef.current;
+    const ws = workspaceRef.current;
+    if (!host || !ws) return;
+
+    const resize = () => {
+      try {
+        Blockly.svgResize(ws);
+      } catch (_) {
+        // ignore
+      }
+    };
+
+    resize();
+    const ro = new ResizeObserver(() => resize());
+    ro.observe(host);
+    return () => ro.disconnect();
+  }, [editorRoutine?.id, workspaceReady]);
+
+  useEffect(() => {
+    const onResize = () => {
+      const ws = workspaceRef.current;
+      if (!ws) return;
+      try {
+        Blockly.svgResize(ws);
+      } catch (_) {
+        // ignore
+      }
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  const connectBlock = useCallback(async () => {
+    if (!connectToSelectedBrick) throw new Error('Connect function unavailable');
+    if (!selectedBrickId) throw new Error('No brick selected (scan/select in Model tab)');
+    await connectToSelectedBrick();
+  }, [connectToSelectedBrick, selectedBrickId]);
+
+  const api = useMemo(() => {
+    const appendTrace = (line) =>
+      setTrace((prev) => [...prev, `[${new Date().toLocaleTimeString()}] ${String(line ?? '')}`].slice(-200));
+
+    const isCancelled = () => Boolean(cancelRef.current?.isCancelled);
+
+    const wait = async (ms) => {
+      const delay = clamp(Number(ms ?? 0), 0, 60_000);
+      if (isCancelled()) return;
+      await new Promise((resolve) => {
+        const t = setTimeout(resolve, delay);
+        cancelRef.current.onCancel = () => {
+          clearTimeout(t);
+          resolve();
+        };
+      });
+    };
+
+    const setServoPosition = async (id, deg) => {
+      if (!ipc) throw new Error('IPC unavailable');
+      if (isCancelled()) return;
+      const servoId = Number(id ?? 0);
+      const c = calibration?.servoConfig?.[servoId] || {};
+      const min = typeof c.min === 'number' ? c.min : -120;
+      const max = typeof c.max === 'number' ? c.max : 120;
+      const reverse = Boolean(c.reverse);
+      const ui = clamp(Number(deg ?? 0), min, max);
+      const posDeg = reverse ? -ui : ui;
+      await ipc.invoke('jimu:setServoPos', { id: servoId, posDeg });
+    };
+
+    const rotateMotor = async (id, dir, speed, durationMs) => {
+      if (!ipc) throw new Error('IPC unavailable');
+      if (isCancelled()) return;
+      const motorId = Number(id ?? 0);
+      const c = calibration?.motorConfig?.[motorId] || {};
+      const maxSpeed = typeof c.maxSpeed === 'number' ? c.maxSpeed : 150;
+      const reverse = Boolean(c.reverse);
+      const cleanDir = String(dir) === 'ccw' ? 'ccw' : 'cw';
+      const finalDir = reverse ? (cleanDir === 'cw' ? 'ccw' : 'cw') : cleanDir;
+      await ipc.invoke('jimu:rotateMotor', {
+        id: motorId,
+        dir: finalDir,
+        speed: Number(speed ?? 0),
+        maxSpeed,
+        durationMs: Number(durationMs ?? 0),
+      });
+    };
+
+    const readIR = async (id) => {
+      if (!ipc) throw new Error('IPC unavailable');
+      if (isCancelled()) return 0;
+      const res = await ipc.invoke('jimu:readSensorIR', Number(id ?? 1));
+      if (res?.error) throw new Error(res.message || 'IR read failed');
+      return typeof res?.raw === 'number' ? res.raw : Number(res?.value ?? 0);
+    };
+
+    const readUltrasonicCm = async (id) => {
+      if (!ipc) throw new Error('IPC unavailable');
+      if (isCancelled()) return 0;
+      const res = await ipc.invoke('jimu:readSensorUS', Number(id ?? 1));
+      if (res?.error) throw new Error(res.message || 'US read failed');
+      if (typeof res?.cm === 'number') return res.cm;
+      if (typeof res?.raw === 'number') return res.raw === 0 ? 301.0 : Number(res.raw);
+      return 0;
+    };
+
+    const emergencyStop = async () => {
+      if (!ipc) throw new Error('IPC unavailable');
+      cancelRef.current.isCancelled = true;
+      try {
+        await ipc.invoke('jimu:emergencyStop');
+      } catch (_) {
+        // ignore best effort
+      }
+    };
+
+    return {
+      connect: connectBlock,
+      wait,
+      setServoPosition,
+      rotateMotor,
+      readIR,
+      readUltrasonicCm,
+      emergencyStop,
+      log: (t) => {
+        appendTrace(t);
+        addLog?.(`[Routine] ${String(t ?? '')}`);
+      },
+    };
+  }, [ipc, calibration, addLog, connectBlock]);
+
+  const runRoutine = useCallback(async () => {
+    if (!editorRoutine) return;
+    const ws = workspaceRef.current;
+    if (!ws) return;
+    setRunError(null);
+    setRunState('running');
+    setTrace([]);
+
+    const cancelState = { isCancelled: false, onCancel: null };
+    cancelRef.current = {
+      ...cancelState,
+      cancel: async () => {
+        cancelState.isCancelled = true;
+        try {
+          await ipc?.invoke?.('jimu:emergencyStop');
+        } catch (_) {
+          // ignore
+        }
+        try {
+          cancelState.onCancel?.();
+        } catch (_) {
+          // ignore
+        }
+      },
+    };
+
+    try {
+      const src = workspaceToAsyncJs(ws);
+      // eslint-disable-next-line no-new-func
+      const fn = new Function('api', src);
+      await fn(api);
+      setRunState(cancelState.isCancelled ? 'stopped' : 'idle');
+    } catch (e) {
+      setRunState('error');
+      setRunError(e?.message || String(e));
+    }
+  }, [editorRoutine, api, ipc]);
+
+  const stopRoutine = useCallback(async () => {
+    await cancelRef.current.cancel?.();
+    setRunState('stopped');
+  }, []);
+
+  const editorHeader = (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      <button
+        onClick={async () => {
+          const ok = await confirmLeaveEditor();
+          if (!ok) return;
+          setEditorRoutine(null);
+          setEditorXml('');
+          setEditorDirty(false);
+          setRunState('idle');
+          setRunError(null);
+          setTrace([]);
+        }}
+      >
+        Back
+      </button>
+      <div style={{ fontWeight: 600, marginLeft: 4 }}>{editorRoutine?.name}</div>
+      <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span>
+          Status:{' '}
+          <strong style={{ color: status === 'Connected' ? '#1b5e20' : '#888' }}>
+            {status === 'Connected' ? 'Connected' : 'Disconnected'}
+          </strong>
+        </span>
+        <span>
+          Run:{' '}
+          <strong style={{ color: runState === 'error' ? '#b71c1c' : runState === 'running' ? '#0b3d91' : '#333' }}>
+            {runState}
+          </strong>
+        </span>
+        {editorDirty ? <span style={{ color: '#b26a00' }}>• unsaved</span> : null}
+        <button onClick={() => setVarsOpen(true)}>Variables…</button>
+        <button
+          onClick={() => setNameDialog({ open: true, mode: 'rename', routineId: editorRoutine.id, initialName: editorRoutine.name })}
+        >
+          Rename
+        </button>
+        <button
+          onClick={async () => {
+            const ok = window.confirm(`Delete routine "${editorRoutine.name}"?`);
+            if (!ok) return;
+            await stopRoutine();
+            await ipc.invoke('routine:delete', { projectId, routineId: editorRoutine.id });
+            await refreshList();
+            setEditorRoutine(null);
+            setEditorXml('');
+            setEditorDirty(false);
+          }}
+        >
+          Delete
+        </button>
+        <button onClick={saveRoutine}>Save</button>
+        <button
+          onClick={runRoutine}
+          disabled={runState === 'running'}
+          style={{ background: '#1b5e20', color: '#fff', border: '1px solid #0f3d15' }}
+        >
+          Run
+        </button>
+        <button
+          onClick={stopRoutine}
+          style={{ background: '#c62828', color: '#fff', border: '1px solid #8e0000' }}
+          disabled={runState !== 'running'}
+        >
+          Stop
+        </button>
+      </div>
+    </div>
+  );
+
+  if (!projectId) return <div style={{ color: '#777' }}>Open a project first.</div>;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+      {!editorRoutine ? (
+        <div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }}>
+            <button onClick={() => setNameDialog({ open: true, mode: 'create', routineId: null, initialName: '' })}>
+              Create routine
+            </button>
+            <button onClick={refreshList}>Refresh</button>
+            <div style={{ marginLeft: 'auto', color: '#777' }}>{routines.length} routine(s)</div>
+          </div>
+          <div style={{ border: '1px solid #ddd', borderRadius: 8, overflow: 'hidden' }}>
+            {routines.length === 0 ? (
+              <div style={{ padding: 12, color: '#777' }}>No routines yet.</div>
+            ) : (
+              routines.map((r) => (
+                <div
+                  key={r.id}
+                  style={{ display: 'flex', gap: 8, alignItems: 'center', padding: 10, borderTop: '1px solid #eee' }}
+                >
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600 }}>{r.name}</div>
+                    <div style={{ color: '#777', fontSize: 12 }}>
+                      {r.updatedAt ? `Updated: ${r.updatedAt}` : ''}
+                    </div>
+                  </div>
+                  <button onClick={() => loadRoutine(r)}>Open</button>
+                  <button onClick={() => setNameDialog({ open: true, mode: 'rename', routineId: r.id, initialName: r.name })}>
+                    Rename
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const ok = window.confirm(`Delete routine "${r.name}"?`);
+                      if (!ok) return;
+                      await ipc.invoke('routine:delete', { projectId, routineId: r.id });
+                      await refreshList();
+                    }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+          {editorHeader}
+          {runError ? <div style={{ marginTop: 8, color: '#b71c1c' }}>Error: {runError}</div> : null}
+          {workspaceError ? (
+            <div style={{ marginTop: 8, color: '#b71c1c' }}>
+              Blockly failed to initialize: {workspaceError}
+            </div>
+          ) : null}
+          {!workspaceReady && !workspaceError ? (
+            <div style={{ marginTop: 8, color: '#777' }}>Loading Blockly…</div>
+          ) : null}
+          <div
+            ref={hostRef}
+            style={{
+              marginTop: 10,
+              flex: 1,
+              minHeight: 420,
+              border: '1px solid #ddd',
+              borderRadius: 8,
+              background: '#fff',
+              overflow: 'hidden',
+              position: 'relative',
+            }}
+          />
+          <div style={{ marginTop: 10, display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: 340 }}>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>Trace</div>
+              <div style={{ maxHeight: 220, overflow: 'auto', background: '#f7f7f7', padding: 8, borderRadius: 6 }}>
+                {trace.length === 0 ? <div style={{ color: '#888' }}>No output yet.</div> : trace.map((l, i) => <div key={i}>{l}</div>)}
+              </div>
+            </div>
+          </div>
+          <VariablesDialog open={varsOpen} workspace={workspaceRef.current} onClose={() => setVarsOpen(false)} />
+        </div>
+      )}
+
+      <RoutineNameDialog
+        open={nameDialog.open}
+        title={nameDialog.mode === 'create' ? 'Create routine' : 'Rename routine'}
+        initialName={nameDialog.initialName}
+        onCancel={() => setNameDialog((p) => ({ ...p, open: false }))}
+        onSubmit={async (name) => {
+          try {
+            if (nameDialog.mode === 'create') {
+              const res = await ipc.invoke('routine:create', { projectId, name });
+              await refreshList();
+              setNameDialog((p) => ({ ...p, open: false }));
+              if (res?.routine?.id) {
+                await loadRoutine(res.routine);
+              }
+            } else {
+              await ipc.invoke('routine:rename', { projectId, routineId: nameDialog.routineId, name });
+              await refreshList();
+              if (editorRoutine?.id === nameDialog.routineId) setEditorRoutine((p) => (p ? { ...p, name } : p));
+              setNameDialog((p) => ({ ...p, open: false }));
+            }
+          } catch (e) {
+            addLog?.(`Routine update failed: ${e?.message || String(e)}`);
+          }
+        }}
+      />
+    </div>
+  );
+});
+
+export default RoutinesTab;
