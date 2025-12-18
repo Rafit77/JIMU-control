@@ -183,7 +183,7 @@ const defineBlocksOnce = (() => {
           'Set one or more positional servos at once. Each servo has its own target degrees, and all share the same duration.',
         );
         this.itemCount_ = 1;
-        this.appendDummyInput('TITLE').appendField('set servo position');
+        this.appendDummyInput('TITLE').appendField('servo position');
         this.setMutator(new Blockly.icons.MutatorIcon(['jimu_set_servo_pos_item'], this));
         this.updateShape_();
       },
@@ -246,12 +246,14 @@ const defineBlocksOnce = (() => {
         if (this.getInput('DUR')) this.removeInput('DUR');
 
         for (let idx = 0; idx < this.itemCount_; idx += 1) {
-          this.appendValueInput(`DEG${idx}`)
+          const input = this.appendValueInput(`DEG${idx}`)
             .setCheck('Number')
             .appendField(makeIdDropdown('servoPosition'), `ID${idx}`)
-            .appendField('<');
+            .appendField('<--- (deg)');
+          input.connection?.setShadowState({ type: 'math_number', fields: { NUM: 0 } });
         }
-        this.appendValueInput('DUR').setCheck('Number').appendField('duration ms');
+        const durInput = this.appendValueInput('DUR').setCheck('Number').appendField('duration ms');
+        durInput.connection?.setShadowState({ type: 'math_number', fields: { NUM: 80 } });
       },
     };
 
@@ -732,7 +734,7 @@ export const getBlocklyToolbox = () => {
             type: 'jimu_set_servo_timed',
             inputs: {
               DEG0: { shadow: { type: 'math_number', fields: { NUM: 0 } } },
-              DUR: { shadow: { type: 'math_number', fields: { NUM: 400 } } },
+              DUR: { shadow: { type: 'math_number', fields: { NUM: 80 } } },
             },
           },
           { kind: 'block', type: 'jimu_rotate_servo', inputs: { SPEED: { shadow: { type: 'math_number', fields: { NUM: 500 } } } } },
