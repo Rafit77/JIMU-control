@@ -245,15 +245,55 @@ const defineBlocksOnce = (() => {
         }
         if (this.getInput('DUR')) this.removeInput('DUR');
 
+        const makeDistinctIdValidator = (idx, field) => {
+          return (newValue) => {
+            const all = getNumericIdOptions('servoPosition');
+            if (!all.length) return newValue;
+
+            const next = String(newValue ?? '');
+            if (!next || next === '0') return next;
+
+            // Count how many times this value appears with the attempted change applied.
+            let countSame = 0;
+            const used = new Set();
+            for (let j = 0; j < this.itemCount_; j += 1) {
+              const v = j === idx ? next : String(this.getFieldValue(`ID${j}`) ?? '');
+              if (v === next) countSame += 1;
+              if (v && v !== '0') used.add(v);
+            }
+            if (countSame <= 1) return next;
+
+            // Duplicate: pick the first unused ID from the available list.
+            for (const id of all) {
+              const s = String(id);
+              if (!used.has(s)) return s;
+            }
+
+            // No alternatives: keep previous value.
+            return String(field.getValue() ?? next);
+          };
+        };
+
         for (let idx = 0; idx < this.itemCount_; idx += 1) {
           const input = this.appendValueInput(`DEG${idx}`)
             .setCheck('Number')
             .appendField(makeIdDropdown('servoPosition'), `ID${idx}`)
             .appendField('<--- (deg)');
           input.connection?.setShadowState({ type: 'math_number', fields: { NUM: 0 } });
+          const idField = this.getField(`ID${idx}`);
+          if (idField && typeof idField.setValidator === 'function') {
+            idField.setValidator(makeDistinctIdValidator(idx, idField));
+          }
         }
         const durInput = this.appendValueInput('DUR').setCheck('Number').appendField('duration ms');
         durInput.connection?.setShadowState({ type: 'math_number', fields: { NUM: 80 } });
+
+        // Warn if duplicates still exist (e.g., not enough distinct servos available).
+        const ids = [];
+        for (let idx = 0; idx < this.itemCount_; idx += 1) ids.push(String(this.getFieldValue(`ID${idx}`) ?? ''));
+        const clean = ids.filter((x) => x && x !== '0');
+        const dup = clean.length !== new Set(clean).size;
+        this.setWarningText(dup ? 'Duplicate servo IDs: each row should target a different servo.' : null);
       },
     };
 
