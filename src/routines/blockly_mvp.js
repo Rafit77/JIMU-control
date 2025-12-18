@@ -184,7 +184,7 @@ const defineBlocksOnce = (() => {
         );
         this.itemCount_ = 1;
         this.appendDummyInput('TITLE').appendField('set servo position');
-        this.setMutator(new Blockly.Mutator(['jimu_set_servo_pos_item']));
+        this.setMutator(new Blockly.icons.MutatorIcon(['jimu_set_servo_pos_item'], this));
         this.updateShape_();
       },
       saveExtraState() {
@@ -223,7 +223,7 @@ const defineBlocksOnce = (() => {
 
         for (let i = 0; i < this.itemCount_; i += 1) {
           if (oldIds[i] != null && this.getField(`ID${i}`)) this.setFieldValue(oldIds[i], `ID${i}`);
-          Blockly.Mutator.reconnect(valueConnections[i], this, `DEG${i}`);
+          if (valueConnections[i]) valueConnections[i].reconnect(this, `DEG${i}`);
         }
       },
       saveConnections(container) {

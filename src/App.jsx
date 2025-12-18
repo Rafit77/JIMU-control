@@ -121,8 +121,10 @@ const BatteryIcon = ({ volts, connected }) => {
             width: 5,
             height: 8,
             borderRadius: '0 3px 3px 0',
-            border: `1px solid ${frameBorder}`,
-            borderLeft: 'none',
+            borderStyle: 'solid',
+            borderColor: frameBorder,
+            borderWidth: 1,
+            borderLeftWidth: 0,
             background: frameBg,
             boxSizing: 'border-box',
           }}
