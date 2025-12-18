@@ -187,6 +187,29 @@ const defineBlocksOnce = (() => {
         this.setMutator(new Blockly.icons.MutatorIcon(['jimu_set_servo_pos_item'], this));
         this.updateShape_();
       },
+      updateWarning_() {
+        const ids = [];
+        for (let idx = 0; idx < this.itemCount_; idx += 1) ids.push(String(this.getFieldValue(`ID${idx}`) ?? ''));
+        const clean = ids.filter((x) => x && x !== '0');
+        const dup = clean.length !== new Set(clean).size;
+        this.setWarningText(dup ? 'Duplicate servo IDs: each row should target a different servo.' : null);
+      },
+      onchange(e) {
+        if (!this.workspace || this.workspace.isFlyout) return;
+        // Re-evaluate warning whenever ID fields change (or after mutator changes).
+        if (!e || e.blockId !== this.id) {
+          this.updateWarning_();
+          return;
+        }
+        if (e.type === Blockly.Events.BLOCK_CHANGE && typeof e.name === 'string' && e.name.startsWith('ID')) {
+          this.updateWarning_();
+          return;
+        }
+        if (e.type === Blockly.Events.BLOCK_CHANGE && e.element === 'mutation') {
+          this.updateWarning_();
+          return;
+        }
+      },
       saveExtraState() {
         return { itemCount: this.itemCount_ };
       },
@@ -287,13 +310,7 @@ const defineBlocksOnce = (() => {
         }
         const durInput = this.appendValueInput('DUR').setCheck('Number').appendField('duration ms');
         durInput.connection?.setShadowState({ type: 'math_number', fields: { NUM: 80 } });
-
-        // Warn if duplicates still exist (e.g., not enough distinct servos available).
-        const ids = [];
-        for (let idx = 0; idx < this.itemCount_; idx += 1) ids.push(String(this.getFieldValue(`ID${idx}`) ?? ''));
-        const clean = ids.filter((x) => x && x !== '0');
-        const dup = clean.length !== new Set(clean).size;
-        this.setWarningText(dup ? 'Duplicate servo IDs: each row should target a different servo.' : null);
+        this.updateWarning_();
       },
     };
 
