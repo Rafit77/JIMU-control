@@ -395,6 +395,27 @@ const registerIpc = () => {
   ipcMain.handle('jimu:setEyeOff', async (_evt, { eyesMask = 0x01 } = {}) => {
     return jimu.setEyeColor({ eyesMask, time: 0x00, r: 0x00, g: 0x00, b: 0x00 });
   });
+  ipcMain.handle('jimu:setEyeSegments', async (_evt, { eyesMask = 0x01, time = 0xff, entries = [] } = {}) => {
+    const safeEntries = Array.isArray(entries)
+      ? entries.map((e) => ({
+          r: Math.max(0, Math.min(255, Math.round(e?.r ?? 0))),
+          g: Math.max(0, Math.min(255, Math.round(e?.g ?? 0))),
+          b: Math.max(0, Math.min(255, Math.round(e?.b ?? 0))),
+          mask: Math.max(0, Math.min(255, Math.round(e?.mask ?? 1))),
+        }))
+      : [];
+    return jimu.setEyeSegments({ eyesMask, time, entries: safeEntries });
+  });
+  ipcMain.handle('jimu:setEyeAnimation', async (_evt, { eyesMask = 0x01, animationId = 1, repetitions = 1, r = 0, g = 0, b = 0 } = {}) => {
+    return jimu.setEyeAnimation({
+      eyesMask,
+      animationId,
+      repetitions,
+      r: Math.max(0, Math.min(255, Math.round(r))),
+      g: Math.max(0, Math.min(255, Math.round(g))),
+      b: Math.max(0, Math.min(255, Math.round(b))),
+    });
+  });
   ipcMain.handle('jimu:setUltrasonicLed', async (_evt, { id = 1, r = 0, g = 0, b = 0 } = {}) => {
     return jimu.setUltrasonicLed({
       id,

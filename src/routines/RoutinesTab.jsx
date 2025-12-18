@@ -1,8 +1,27 @@
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import * as Blockly from 'blockly';
-import { createWorkspace, workspaceToAsyncJs, workspaceToXmlText } from './blockly_mvp.js';
+import { createWorkspace, setIdOptionsProvider, workspaceToAsyncJs, workspaceToXmlText } from './blockly_mvp.js';
+import { batteryPercentFromVolts } from '../battery.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const hexToRgb = (hex) => {
+  const s = String(hex || '').trim();
+  const m = s.match(/^#?([0-9a-fA-F]{6})$/);
+  if (!m) return { r: 0, g: 0, b: 0 };
+  const n = parseInt(m[1], 16);
+  return { r: (n >> 16) & 0xff, g: (n >> 8) & 0xff, b: n & 0xff };
+};
+const eyeIdToMask = (id) => {
+  const n = Math.max(1, Math.min(8, Math.round(Number(id ?? 1))));
+  return 1 << (n - 1);
+};
+// Observed mapping note: "first LED is NE" -> assume bit0=NE, then clockwise.
+const eyeSegmentCompassOrder = ['NE', 'E', 'SE', 'S', 'SW', 'W', 'NW', 'N'];
+const eyeSegmentMaskForCompass = (pos) => {
+  const idx = eyeSegmentCompassOrder.indexOf(pos);
+  if (idx < 0) return 0;
+  return 1 << idx; // assumption: bit0..bit7 maps to N..NW clockwise
+};
 
 const RoutineNameDialog = ({ open, title, initialName, onCancel, onSubmit }) => {
   const [name, setName] = useState(initialName || '');
@@ -147,7 +166,7 @@ const VariablesDialog = ({ open, workspace, onClose }) => {
 };
 
 const RoutinesTab = forwardRef(function RoutinesTab(
-  { ipc, projectId, status, selectedBrickId, connectToSelectedBrick, calibration, addLog },
+  { ipc, projectId, status, selectedBrickId, connectToSelectedBrick, calibration, projectModules, battery, addLog },
   ref,
 ) {
   const [routines, setRoutines] = useState([]);
@@ -175,6 +194,45 @@ const RoutinesTab = forwardRef(function RoutinesTab(
   useEffect(() => {
     refreshList().catch(() => {});
   }, [refreshList]);
+
+  useEffect(() => {
+    const modules = projectModules || {};
+    const servos = Array.isArray(modules.servos) ? modules.servos.map(Number).filter((n) => Number.isFinite(n)) : [];
+    const motors = Array.isArray(modules.motors) ? modules.motors.map(Number).filter((n) => Number.isFinite(n)) : [];
+    const ir = Array.isArray(modules.ir) ? modules.ir.map(Number).filter((n) => Number.isFinite(n)) : [];
+    const ultrasonic = Array.isArray(modules.ultrasonic)
+      ? modules.ultrasonic.map(Number).filter((n) => Number.isFinite(n))
+      : [];
+    const eyes = Array.isArray(modules.eyes) ? modules.eyes.map(Number).filter((n) => Number.isFinite(n)) : [];
+
+    const cfg = calibration || {};
+    const servoConfig = cfg.servoConfig || {};
+    const servoMode = (id) => {
+      const c = servoConfig?.[id] || servoConfig?.[String(id)] || null;
+      return String(c?.mode || 'servo');
+    };
+    const servoAny = servos;
+    const servoPosition = servos.filter((id) => {
+      const m = servoMode(id);
+      return m === 'servo' || m === 'mixed' || !m;
+    });
+    const servoRotate = servos.filter((id) => {
+      const m = servoMode(id);
+      return m === 'motor' || m === 'mixed';
+    });
+
+    setIdOptionsProvider((kind) => {
+      if (kind === 'eyes') return eyes;
+      if (kind === 'ultrasonic') return ultrasonic;
+      if (kind === 'ir') return ir;
+      if (kind === 'motor') return motors;
+      if (kind === 'servoAny') return servoAny;
+      if (kind === 'servoPosition') return servoPosition;
+      if (kind === 'servoRotate') return servoRotate;
+      return [];
+    });
+    return () => setIdOptionsProvider(null);
+  }, [projectModules, calibration]);
 
   const loadRoutine = useCallback(
     async (routine) => {
@@ -316,17 +374,12 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  const connectBlock = useCallback(async () => {
-    if (!connectToSelectedBrick) throw new Error('Connect function unavailable');
-    if (!selectedBrickId) throw new Error('No brick selected (scan/select in Model tab)');
-    await connectToSelectedBrick();
-  }, [connectToSelectedBrick, selectedBrickId]);
-
   const api = useMemo(() => {
     const appendTrace = (line) =>
       setTrace((prev) => [...prev, `[${new Date().toLocaleTimeString()}] ${String(line ?? '')}`].slice(-200));
 
     const isCancelled = () => Boolean(cancelRef.current?.isCancelled);
+    const warnedRef = { appInputs: false, action: false, show: false };
 
     const wait = async (ms) => {
       const delay = clamp(Number(ms ?? 0), 0, 60_000);
@@ -353,6 +406,40 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       await ipc.invoke('jimu:setServoPos', { id: servoId, posDeg });
     };
 
+    const setServoPositionTimed = async (id, deg, durationMs = 400) => {
+      await setServoPosition(id, deg);
+      await wait(clamp(Number(durationMs ?? 400), 0, 6000));
+    };
+
+    const rotateServo = async (id, dir, speed) => {
+      if (!ipc) throw new Error('IPC unavailable');
+      if (isCancelled()) return;
+      const servoId = Number(id ?? 0);
+      const c = calibration?.servoConfig?.[servoId] || {};
+      const maxSpeed = typeof c.maxSpeed === 'number' ? c.maxSpeed : 1000;
+      const reverse = Boolean(c.reverse);
+      const cleanDir = String(dir) === 'ccw' ? 'ccw' : 'cw';
+      const finalDir = reverse ? (cleanDir === 'cw' ? 'ccw' : 'cw') : cleanDir;
+      const dirByte = finalDir === 'cw' ? 0x01 : 0x02;
+      await ipc.invoke('jimu:rotateServo', { id: servoId, dir: dirByte, speed: Number(speed ?? 0), maxSpeed });
+    };
+
+    const stopServo = async (id) => {
+      if (!ipc) throw new Error('IPC unavailable');
+      if (isCancelled()) return;
+      const servoId = Number(id ?? 0);
+      try {
+        await ipc.invoke('jimu:rotateServo', { id: servoId, dir: 0x01, speed: 0, maxSpeed: 1000 });
+      } catch (_) {
+        // ignore
+      }
+      try {
+        await ipc.invoke('jimu:readServo', servoId);
+      } catch (_) {
+        // ignore
+      }
+    };
+
     const rotateMotor = async (id, dir, speed, durationMs) => {
       if (!ipc) throw new Error('IPC unavailable');
       if (isCancelled()) return;
@@ -369,6 +456,12 @@ const RoutinesTab = forwardRef(function RoutinesTab(
         maxSpeed,
         durationMs: Number(durationMs ?? 0),
       });
+    };
+
+    const stopMotor = async (id) => {
+      if (!ipc) throw new Error('IPC unavailable');
+      if (isCancelled()) return;
+      await ipc.invoke('jimu:stopMotor', Number(id ?? 0));
     };
 
     const readIR = async (id) => {
@@ -389,30 +482,236 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       return 0;
     };
 
+    const readServoDeg = async (id) => {
+      if (!ipc) throw new Error('IPC unavailable');
+      if (isCancelled()) return 0;
+      const servoId = Number(id ?? 1);
+      const res = await ipc.invoke('jimu:readServo', servoId);
+      const deg = typeof res?.deg === 'number' ? res.deg : 0;
+      const c = calibration?.servoConfig?.[servoId] || {};
+      const reverse = Boolean(c.reverse);
+      return reverse ? -deg : deg;
+    };
+
+    const getSlider = (name) => {
+      if (!warnedRef.appInputs) {
+        warnedRef.appInputs = true;
+        appendTrace('Note: UI inputs (slider/joystick/switch) are not implemented yet; returning 0/false.');
+      }
+      return 0;
+    };
+    const getJoystick = (name, axis) => {
+      if (!warnedRef.appInputs) {
+        warnedRef.appInputs = true;
+        appendTrace('Note: UI inputs (slider/joystick/switch) are not implemented yet; returning 0/false.');
+      }
+      return 0;
+    };
+    const getSwitch = (name) => {
+      if (!warnedRef.appInputs) {
+        warnedRef.appInputs = true;
+        appendTrace('Note: UI inputs (slider/joystick/switch) are not implemented yet; returning 0/false.');
+      }
+      return false;
+    };
+
+    const selectAction = (name) => {
+      if (!warnedRef.action) {
+        warnedRef.action = true;
+        appendTrace('Note: select action is a placeholder (Actions playback not implemented yet).');
+      }
+      appendTrace(`Selected action: ${String(name || '')}`);
+    };
+
+    const eyeColor = async (id, hex) => {
+      if (!ipc) throw new Error('IPC unavailable');
+      if (isCancelled()) return;
+      const { r, g, b } = hexToRgb(hex);
+      const eyesMask = eyeIdToMask(id);
+      await ipc.invoke('jimu:setEyeColor', { eyesMask, time: 0xff, r, g, b });
+    };
+
+    const eyeOff = async (id) => {
+      if (!ipc) throw new Error('IPC unavailable');
+      if (isCancelled()) return;
+      const eyesMask = eyeIdToMask(id);
+      await ipc.invoke('jimu:setEyeOff', { eyesMask });
+    };
+
+    const eyeColorFor = async (id, hex, durationMs = 400) => {
+      await eyeColor(id, hex);
+      await wait(clamp(Number(durationMs ?? 400), 0, 60_000));
+      await eyeOff(id);
+    };
+
+    const eyeCustom = async (id, segMask, hex) => {
+      if (!ipc) throw new Error('IPC unavailable');
+      if (isCancelled()) return;
+      const { r, g, b } = hexToRgb(hex);
+      const eyesMask = eyeIdToMask(id);
+      const mask = clamp(Number(segMask ?? 0xff), 0, 0xff);
+      await ipc.invoke('jimu:setEyeSegments', { eyesMask, time: 0xff, entries: [{ r, g, b, mask }] });
+    };
+
+    const eyeCustomFor = async (id, segMask, hex, durationMs = 400) => {
+      await eyeCustom(id, segMask, hex);
+      await wait(clamp(Number(durationMs ?? 400), 0, 60_000));
+      await eyeOff(id);
+    };
+
+    const eyeScene = async (id, scene, repeat, waitFor, hex) => {
+      if (!ipc) throw new Error('IPC unavailable');
+      if (isCancelled()) return;
+      const { r, g, b } = hexToRgb(hex);
+      const eyesMask = eyeIdToMask(id);
+      await ipc.invoke('jimu:setEyeAnimation', {
+        eyesMask,
+        animationId: clamp(Number(scene ?? 1), 1, 15),
+        repetitions: clamp(Number(repeat ?? 1), 1, 255),
+        r,
+        g,
+        b,
+      });
+      if (waitFor) {
+        if (!warnedRef.show) {
+          warnedRef.show = true;
+          appendTrace('Note: eye scene wait is best-effort (no completion signal from the brick yet).');
+        }
+        await wait(clamp(Number(repeat ?? 1), 1, 255) * 400);
+      }
+    };
+
+    const usLedColor = async (id, hex) => {
+      if (!ipc) throw new Error('IPC unavailable');
+      if (isCancelled()) return;
+      const { r, g, b } = hexToRgb(hex);
+      await ipc.invoke('jimu:setUltrasonicLed', { id: Number(id ?? 1), r, g, b });
+    };
+
+    const usLedOff = async (id) => {
+      if (!ipc) throw new Error('IPC unavailable');
+      if (isCancelled()) return;
+      await ipc.invoke('jimu:setUltrasonicLedOff', { id: Number(id ?? 1) });
+    };
+
+    const indicatorColor = (name, hex) => {
+      if (!warnedRef.appInputs) {
+        warnedRef.appInputs = true;
+        appendTrace('Note: Controller widgets are not implemented yet; indicator/display are placeholders.');
+      }
+      appendTrace(`Indicator "${String(name || '')}" color ${String(hex || '')}`);
+    };
+
+    const displayShow = (name, value) => {
+      if (!warnedRef.appInputs) {
+        warnedRef.appInputs = true;
+        appendTrace('Note: Controller widgets are not implemented yet; indicator/display are placeholders.');
+      }
+      appendTrace(`Display "${String(name || '')}": ${String(value)}`);
+    };
+
+    const eyeCustom8 = async (id, colorsByPos) => {
+      if (!ipc) throw new Error('IPC unavailable');
+      if (isCancelled()) return;
+      const eyesMask = eyeIdToMask(id);
+      const entries = eyeSegmentCompassOrder.map((pos) => {
+        const hex = colorsByPos?.[pos] || '#000000';
+        const { r, g, b } = hexToRgb(hex);
+        const mask = eyeSegmentMaskForCompass(pos);
+        return { r, g, b, mask };
+      });
+      await ipc.invoke('jimu:setEyeSegments', { eyesMask, time: 0xff, entries });
+    };
+
+    const eyeCustom8For = async (id, colorsByPos, durationMs = 400) => {
+      await eyeCustom8(id, colorsByPos);
+      await wait(clamp(Number(durationMs ?? 400), 0, 60_000));
+      await eyeOff(id);
+    };
+
+    const allStop = async () => {
+      if (!ipc) throw new Error('IPC unavailable');
+      // Stop motion and release holds (best effort)
+      try {
+        await ipc.invoke('jimu:emergencyStop');
+      } catch (_) {
+        // ignore
+      }
+      // Also force LEDs off based on project snapshot (even if not detected)
+      const modules = projectModules || {};
+      const eyes = Array.isArray(modules.eyes) ? modules.eyes : [];
+      const us = Array.isArray(modules.ultrasonic) ? modules.ultrasonic : [];
+      for (const id of eyes) {
+        try {
+          await ipc.invoke('jimu:setEyeOff', { eyesMask: eyeIdToMask(id) });
+        } catch (_) {
+          // ignore
+        }
+      }
+      for (const id of us) {
+        try {
+          await ipc.invoke('jimu:setUltrasonicLedOff', { id: Number(id ?? 1) });
+        } catch (_) {
+          // ignore
+        }
+      }
+    };
+
     const emergencyStop = async () => {
       if (!ipc) throw new Error('IPC unavailable');
       cancelRef.current.isCancelled = true;
       try {
-        await ipc.invoke('jimu:emergencyStop');
+        await allStop();
       } catch (_) {
         // ignore best effort
       }
     };
 
+    const batteryPercent = () => {
+      const pct = batteryPercentFromVolts(battery?.volts);
+      if (pct == null) return 0;
+      return Math.round(pct * 100);
+    };
+
+    const batteryCharging = () => Boolean(battery?.charging);
+
     return {
-      connect: connectBlock,
       wait,
       setServoPosition,
+      setServoPositionTimed,
+      rotateServo,
+      stopServo,
       rotateMotor,
+      stopMotor,
       readIR,
       readUltrasonicCm,
+      readServoDeg,
+      getSlider,
+      getJoystick,
+      getSwitch,
+      selectAction,
+      eyeColor,
+      eyeColorFor,
+      eyeScene,
+      eyeCustom,
+      eyeCustomFor,
+      eyeCustom8,
+      eyeCustom8For,
+      eyeOff,
+      usLedColor,
+      usLedOff,
+      indicatorColor,
+      displayShow,
+      allStop,
       emergencyStop,
+      batteryPercent,
+      batteryCharging,
       log: (t) => {
         appendTrace(t);
         addLog?.(`[Routine] ${String(t ?? '')}`);
       },
     };
-  }, [ipc, calibration, addLog, connectBlock]);
+  }, [ipc, calibration, projectModules, battery, addLog]);
 
   const runRoutine = useCallback(async () => {
     if (!editorRoutine) return;
@@ -428,7 +727,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       cancel: async () => {
         cancelState.isCancelled = true;
         try {
-          await ipc?.invoke?.('jimu:emergencyStop');
+          await api.allStop?.();
         } catch (_) {
           // ignore
         }

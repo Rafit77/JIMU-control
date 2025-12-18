@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import * as Slider from '@radix-ui/react-slider';
 import RoutinesTab from './routines/RoutinesTab.jsx';
+import { batteryPercentFromVolts } from './battery.js';
 
 const Section = ({ title, children, style }) => (
   <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 12, marginBottom: 12, ...(style || {}) }}>
@@ -85,14 +86,6 @@ const hexToRgb = (hex) => {
   const b = parseInt(s.slice(4, 6), 16);
   if ([r, g, b].some((x) => Number.isNaN(x))) return null;
   return { r, g, b };
-};
-
-const BATTERY_EMPTY_VOLTS = 6.5;
-const BATTERY_FULL_VOLTS = 8.4;
-const batteryPercentFromVolts = (volts) => {
-  if (!Number.isFinite(volts)) return null;
-  const p = (volts - BATTERY_EMPTY_VOLTS) / (BATTERY_FULL_VOLTS - BATTERY_EMPTY_VOLTS);
-  return clamp(p, 0, 1);
 };
 
 const BatteryIcon = ({ volts, connected }) => {
@@ -2350,6 +2343,8 @@ export default function App() {
                 selectedBrickId={selectedBrickId}
                 connectToSelectedBrick={handleConnect}
                 calibration={currentProject?.data?.calibration || {}}
+                projectModules={currentProject?.data?.hardware?.modules || {}}
+                battery={battery}
                 addLog={addLog}
               />
             </Section>

@@ -688,6 +688,22 @@ export class Jimu extends EventEmitter {
     await this._send(payload);
   }
 
+  async setEyeAnimation({ eyesMask = 0x01, animationId = 1, repetitions = 1, r = 0xff, g = 0x00, b = 0x00 } = {}) {
+    // Per docs/protocol.md:
+    //   78 04 <eyesMask> <animationId> 00 <repetitions> <r> <g> <b>
+    await this._send([
+      0x78,
+      0x04,
+      clampByte(eyesMask),
+      clampByte(animationId),
+      0x00,
+      clampByte(repetitions),
+      clampByte(r),
+      clampByte(g),
+      clampByte(b),
+    ]);
+  }
+
   // Change IDs (sensors/motors/eyes/ultrasonic)
   async changePeripheralId({ type, fromId, toId }) {
     await this._send([0x74, clampByte(type), clampByte(fromId), clampByte(toId)]);

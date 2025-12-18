@@ -62,7 +62,9 @@ MVP categories (as implemented):
 - **Control**: if/else, loops, wait, wait-until
 - **Math**: arithmetic, random int, constrain, comparisons and boolean operators
 - **Variables**: create/set/get variables
-- **Device**: connect + servo/motor/sensor blocks
+- **Sensors**: brick sensors + UI inputs (slider/joystick/switch)
+- **Movement**: connect + servo/motor movement + safety + action placeholder
+- **Show**: eyes + ultrasonic LEDs + controller outputs
 - **Debug**: log/trace block
 
 Notes:
@@ -101,25 +103,55 @@ This section lists **all blocks currently available** in the Routines toolbox an
 - Variables dialog in the editor:
   - Create / Rename / Delete variables.
 
-### Device
-- `connect` (`jimu_connect`)
-  - Connects to the **already selected brick** (scan/select in Model tab).
-  - If no brick is selected: throws a user-visible error.
-- `set servo [id] position [deg]` (`jimu_set_servo`)
-  - Clamps degrees using project calibration: `calibration.servoConfig[id].min/max`.
-  - Applies `reverse` calibration (inverts degrees before sending to the brick).
-  - Uses the existing device IPC (`jimu:setServoPos`).
-- `rotate motor [id] [cw/ccw] speed [x] duration [ms]` (`jimu_rotate_motor`)
-  - Duration is clamped by the device layer to `0..6000ms`.
-  - Uses project calibration: `calibration.motorConfig[id].maxSpeed` + `reverse`.
-  - Uses the existing device IPC (`jimu:rotateMotor`).
+### Sensors
 - `read IR [id]` (`jimu_read_ir`) → returns a number
-  - Returns the **raw IR reading** from the device.
+  - Returns the raw IR reading from the brick.
 - `read Ultrasonic [id] (cm)` (`jimu_read_us`) → returns a number
   - Returns distance in cm.
   - Convention: if the device raw value is `0` (out of range), this returns `301.0`.
+- `read servo [id] (deg)` (`jimu_read_servo`) → returns a number
+  - Reads current servo position in degrees.
+  - Respects calibration `reverse` (returns inverted degrees if enabled).
+- `battery level (%)` (`jimu_battery_percent`) → returns a number
+  - Returns `0..100` using the same voltage calibration as the UI battery icon.
+- `battery charging?` (`jimu_battery_charging`) → returns a boolean
+  - True if the brick reports it is charging.
+- `get slider [name]` (`jimu_get_slider`) → returns a number
+- `get joystick [name] [x|y]` (`jimu_get_joystick`) → returns a number
+- `get switch [name]` (`jimu_get_switch`) → returns a boolean
+  - These are planned "application inputs" (Controller widgets).
+  - Current implementation returns `0` / `false` (placeholder).
+
+### Movement
+- `set servo [id] position [deg] duration [ms]` (`jimu_set_servo_timed`)
+  - Sends a servo set-position command (clamped by calibration min/max + reverse), then waits `[ms]`.
+  - Note: `[ms]` is currently a **timing wait**, not a closed-loop motion duration from the brick.
+- `rotate servo [id] [cw/ccw] speed [x]` (`jimu_rotate_servo`)
+  - For continuous rotation (servo motor mode).
+  - Speed is clamped using calibration `maxSpeed` + `reverse`.
+- `stop servo [id]` (`jimu_stop_servo`)
+  - Best-effort stop for continuous rotation (implemented via stop+read/release).
+- `rotate motor [id] [cw/ccw] speed [x] duration [ms]` (`jimu_rotate_motor`)
+  - Duration is clamped by the device layer to `0..6000ms`.
+  - Speed respects calibration (`motorConfig.maxSpeed` + `reverse`).
+- `stop motor [id]` (`jimu_stop_motor`)
+  - Best-effort motor stop.
+- `select action [name]` (`jimu_select_action`)
+  - Placeholder for later Action playback integration.
 - `emergency stop` (`jimu_emergency_stop`)
   - Immediately requests a best-effort stop and cancels the routine run.
+
+### Show
+- `eye LED [id] color [color]` (`jimu_eye_color`)
+- `eye LED [id] color [color] duration [ms]` (`jimu_eye_color_duration`)
+- `eye LED [id] color [color] scene [1..15] repeat [n] wait [bool]` (`jimu_eye_scene`)
+- `eye LED [id] custom <8 colors (N/NE/E/SE/S/SW/W/NW)>` (`jimu_eye_custom`)
+- `eye LED [id] custom <8 colors (N/NE/E/SE/S/SW/W/NW)> duration [ms]` (`jimu_eye_custom_duration`)
+- `eye LED [id] off` (`jimu_eye_off`)
+- `ultrasonic LED [id] color [color]` (`jimu_us_led_color`)
+- `ultrasonic LED [id] off` (`jimu_us_led_off`)
+- `indicator [name] color [color]` (`jimu_indicator_color`) — placeholder (Controller widgets not implemented yet)
+- `display [name] show [value]` (`jimu_display_show`) — placeholder (Controller widgets not implemented yet)
 
 ### Debug
 - `log [value]` (`jimu_log`)
