@@ -155,20 +155,103 @@ const defineBlocksOnce = (() => {
       });
     };
 
-    Blockly.Blocks.jimu_set_servo_timed = {
+    // Multi-servo positional move (mutator-based, like lists_create_with).
+    Blockly.Blocks.jimu_set_servo_pos_container = {
       init() {
-        this.appendDummyInput()
-          .appendField('set servo')
-          .appendField(makeIdDropdown('servoPosition'), 'ID')
-          .appendField('position');
-        this.appendValueInput('DEG').setCheck('Number').appendField('deg');
-        this.appendValueInput('DUR').setCheck('Number').appendField('duration').appendField('ms');
+        this.appendDummyInput().appendField('servos');
+        this.appendStatementInput('STACK');
+        this.setColour(200);
+        this.contextMenu = false;
+      },
+    };
+    Blockly.Blocks.jimu_set_servo_pos_item = {
+      init() {
+        this.appendDummyInput().appendField('servo');
         this.setPreviousStatement(true);
         this.setNextStatement(true);
-        this.setColour(160);
+        this.setColour(200);
+        this.contextMenu = false;
+      },
+    };
+
+    Blockly.Blocks.jimu_set_servo_timed = {
+      init() {
+        this.setColour(200);
+        this.setPreviousStatement(true);
+        this.setNextStatement(true);
         this.setTooltip(
-          'Set a positional servo; then wait for the duration (for timing). Degrees are clamped to calibration min/max.',
+          'Set one or more positional servos at once. Each servo has its own target degrees, and all share the same duration.',
         );
+        this.itemCount_ = 1;
+        this.appendDummyInput('TITLE').appendField('set servo position');
+        this.setMutator(new Blockly.Mutator(['jimu_set_servo_pos_item']));
+        this.updateShape_();
+      },
+      saveExtraState() {
+        return { itemCount: this.itemCount_ };
+      },
+      loadExtraState(state) {
+        const n = Number(state?.itemCount ?? 1);
+        this.itemCount_ = Number.isFinite(n) && n > 0 ? Math.min(8, Math.floor(n)) : 1;
+        this.updateShape_();
+      },
+      decompose(workspace) {
+        const container = workspace.newBlock('jimu_set_servo_pos_container');
+        container.initSvg();
+        let conn = container.getInput('STACK').connection;
+        for (let i = 0; i < this.itemCount_; i += 1) {
+          const item = workspace.newBlock('jimu_set_servo_pos_item');
+          item.initSvg();
+          conn.connect(item.previousConnection);
+          conn = item.nextConnection;
+        }
+        return container;
+      },
+      compose(container) {
+        const valueConnections = [];
+        let item = container.getInputTargetBlock('STACK');
+        while (item) {
+          valueConnections.push(item.valueConnection_);
+          item = item.nextConnection && item.nextConnection.targetBlock();
+        }
+
+        const oldIds = [];
+        for (let i = 0; i < this.itemCount_; i += 1) oldIds.push(this.getFieldValue(`ID${i}`));
+
+        this.itemCount_ = Math.max(1, Math.min(8, valueConnections.length || 1));
+        this.updateShape_();
+
+        for (let i = 0; i < this.itemCount_; i += 1) {
+          if (oldIds[i] != null && this.getField(`ID${i}`)) this.setFieldValue(oldIds[i], `ID${i}`);
+          Blockly.Mutator.reconnect(valueConnections[i], this, `DEG${i}`);
+        }
+      },
+      saveConnections(container) {
+        let item = container.getInputTargetBlock('STACK');
+        let i = 0;
+        while (item) {
+          const input = this.getInput(`DEG${i}`);
+          item.valueConnection_ = input && input.connection.targetConnection;
+          i += 1;
+          item = item.nextConnection && item.nextConnection.targetBlock();
+        }
+      },
+      updateShape_() {
+        // Remove existing servo inputs
+        let i = 0;
+        while (this.getInput(`DEG${i}`)) {
+          this.removeInput(`DEG${i}`);
+          i += 1;
+        }
+        if (this.getInput('DUR')) this.removeInput('DUR');
+
+        for (let idx = 0; idx < this.itemCount_; idx += 1) {
+          this.appendValueInput(`DEG${idx}`)
+            .setCheck('Number')
+            .appendField(makeIdDropdown('servoPosition'), `ID${idx}`)
+            .appendField('<');
+        }
+        this.appendValueInput('DUR').setCheck('Number').appendField('duration ms');
       },
     };
 
@@ -421,10 +504,16 @@ const defineBlocksOnce = (() => {
     };
     javascriptGenerator.forBlock.jimu_emergency_stop = () => 'await api.emergencyStop();\n';
     javascriptGenerator.forBlock.jimu_set_servo_timed = (block) => {
-      const id = Number(block.getFieldValue('ID') || 0);
-      const deg = javascriptGenerator.valueToCode(block, 'DEG', javascriptGenerator.ORDER_NONE) || '0';
       const dur = javascriptGenerator.valueToCode(block, 'DUR', javascriptGenerator.ORDER_NONE) || '400';
-      return `await api.setServoPositionTimed(${id}, ${deg}, ${dur});\n`;
+      const parts = [];
+      for (let i = 0; block.getInput(`DEG${i}`); i += 1) {
+        const id = Number(block.getFieldValue(`ID${i}`) || 0);
+        const deg = javascriptGenerator.valueToCode(block, `DEG${i}`, javascriptGenerator.ORDER_NONE) || '0';
+        if (!id) continue;
+        parts.push(`{ id: ${id}, deg: ${deg} }`);
+      }
+      const entries = `[${parts.join(', ')}]`;
+      return `await api.setServoPositionsTimed(${entries}, ${dur});\n`;
     };
     javascriptGenerator.forBlock.jimu_rotate_motor = (block) => {
       const id = Number(block.getFieldValue('ID') || 0);
@@ -642,7 +731,7 @@ export const getBlocklyToolbox = () => {
             kind: 'block',
             type: 'jimu_set_servo_timed',
             inputs: {
-              DEG: { shadow: { type: 'math_number', fields: { NUM: 0 } } },
+              DEG0: { shadow: { type: 'math_number', fields: { NUM: 0 } } },
               DUR: { shadow: { type: 'math_number', fields: { NUM: 400 } } },
             },
           },

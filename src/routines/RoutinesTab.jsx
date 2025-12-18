@@ -406,9 +406,46 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       await ipc.invoke('jimu:setServoPos', { id: servoId, posDeg });
     };
 
+    const servoSpeedByteFromDurationMs = (durationMs) => {
+      const ms = clamp(Number(durationMs ?? 400), 0, 60_000);
+      // Protocol note (docs/protocol.md): speed/20 = seconds for movement => speed ~= ms/50
+      return clamp(Math.round(ms / 50), 0, 0xff);
+    };
+
+    const setServoPositionsTimed = async (entries, durationMs = 400) => {
+      if (!ipc) throw new Error('IPC unavailable');
+      if (isCancelled()) return;
+
+      const ms = clamp(Number(durationMs ?? 400), 0, 60_000);
+      const speed = servoSpeedByteFromDurationMs(ms);
+
+      const list = Array.isArray(entries) ? entries : [];
+      const servoConfig = calibration?.servoConfig || {};
+
+      // Deduplicate by ID (last wins), then sort ascending (protocol expects positions ordered by ID).
+      const byId = new Map();
+      for (const e of list) {
+        const servoId = Number(e?.id ?? 0);
+        if (!Number.isFinite(servoId) || servoId <= 0) continue;
+        const c = servoConfig?.[servoId] || servoConfig?.[String(servoId)] || {};
+        const min = typeof c.min === 'number' ? c.min : -120;
+        const max = typeof c.max === 'number' ? c.max : 120;
+        const reverse = Boolean(c.reverse);
+        const ui = clamp(Number(e?.deg ?? 0), min, max);
+        const posDeg = reverse ? -ui : ui;
+        byId.set(servoId, posDeg);
+      }
+
+      const ids = Array.from(byId.keys()).sort((a, b) => a - b);
+      if (!ids.length) return;
+      const degrees = ids.map((id) => byId.get(id));
+
+      await ipc.invoke('jimu:setServoPosMulti', { ids, degrees, speed });
+      await wait(ms);
+    };
+
     const setServoPositionTimed = async (id, deg, durationMs = 400) => {
-      await setServoPosition(id, deg);
-      await wait(clamp(Number(durationMs ?? 400), 0, 6000));
+      await setServoPositionsTimed([{ id, deg }], durationMs);
     };
 
     const rotateServo = async (id, dir, speed) => {
@@ -682,6 +719,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     return {
       wait,
       setServoPosition,
+      setServoPositionsTimed,
       setServoPositionTimed,
       rotateServo,
       stopServo,

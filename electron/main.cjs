@@ -448,6 +448,14 @@ const registerIpc = () => {
   ipcMain.handle('jimu:setServoPos', async (_evt, { id, posDeg, speed }) => {
     return jimu.setServoPositionDeg(id, posDeg ?? 0, { speed: speed ?? 0x14, tail: [0x00, 0x00] });
   });
+  ipcMain.handle('jimu:setServoPosMulti', async (_evt, { ids, degrees, speed }) => {
+    return jimu.setServoPositionsDeg({
+      ids: Array.isArray(ids) ? ids : [],
+      degrees: Array.isArray(degrees) ? degrees : [],
+      speed: speed ?? 0x14,
+      tail: [0x00, 0x00],
+    });
+  });
   ipcMain.handle('jimu:rotateServo', async (_evt, { id, dir, speed, maxSpeed = 1000 }) => {
     const lim = Math.max(0, Math.min(maxSpeed, speed ?? 0));
     return jimu.rotateServo(id, dir, lim);

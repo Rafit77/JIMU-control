@@ -109,9 +109,10 @@ Notes:
   - Current implementation returns `0` / `false` (placeholder).
 
 ### Movement
-- `set servo [id] position [deg] duration [ms]` (`jimu_set_servo_timed`)
-  - Sends a servo set-position command (clamped by calibration min/max + reverse), then waits `[ms]`.
-  - Note: `[ms]` is currently a timing wait, not a closed-loop motion duration from the brick.
+- `set servo position` (`jimu_set_servo_timed`)
+  - Mutator block: add/remove servo rows; each row selects a servo ID and provides its target degrees.
+  - Sends one `0x09` “Servo positions” command for all selected servos (clamped by calibration min/max + reverse), then waits `[duration ms]`.
+  - Duration mapping: device `speed` byte uses `speed/20 = seconds` so `speed ~= durationMs/50` (rounded, clamped to `0..255`).
 - `rotate servo [id] [cw/ccw] speed [x]` (`jimu_rotate_servo`)
   - For continuous rotation (servo motor mode).
   - Speed is clamped using calibration `maxSpeed` + `reverse`.
@@ -146,4 +147,3 @@ Notes:
 - `log [value]` (`jimu_log`)
   - Writes to the routine Trace panel and also to the global Logs tab.
   - Accepts any value type.
-
