@@ -470,6 +470,12 @@ const registerIpc = () => {
     const signed = dir === 'ccw' ? -lim : lim;
     return jimu.rotateMotor(id, signed, Math.max(0, Math.min(6000, Math.round(durationMs ?? 1000))));
   });
+  ipcMain.handle('jimu:rotateMotorSigned', async (_evt, { id, speed = 0, maxSpeed = 150, durationMs = 1000 }) => {
+    const raw = Math.round(Number(speed ?? 0));
+    const lim = Math.max(0, Math.min(maxSpeed, Math.abs(raw)));
+    const signed = raw < 0 ? -lim : lim;
+    return jimu.rotateMotor(Number(id ?? 0), signed, Math.max(0, Math.min(6000, Math.round(durationMs ?? 1000))));
+  });
   ipcMain.handle('jimu:stopMotor', async (_evt, id) => jimu.stopMotor(id));
   ipcMain.handle('jimu:emergencyStop', async () => jimu.emergencyStop());
 };

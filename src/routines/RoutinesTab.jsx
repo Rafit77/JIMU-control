@@ -544,6 +544,34 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       });
     };
 
+    const rotateMotorsTimed = async (entries, durationMs = 5000) => {
+      if (!ipc) throw new Error('IPC unavailable');
+      if (isCancelled()) return;
+
+      const ms = clamp(Number(durationMs ?? 5000), 0, 6000);
+      const list = Array.isArray(entries) ? entries : [];
+      const cfg = calibration?.motorConfig || {};
+
+      // Deduplicate by ID (last wins), sort for stable ordering.
+      const byId = new Map();
+      for (const e of list) {
+        const motorId = Number(e?.id ?? 0);
+        if (!Number.isFinite(motorId) || motorId <= 0) continue;
+        byId.set(motorId, Number(e?.speed ?? 0));
+      }
+      const ids = Array.from(byId.keys()).sort((a, b) => a - b);
+
+      for (const motorId of ids) {
+        if (isCancelled()) return;
+        const c = cfg?.[motorId] || cfg?.[String(motorId)] || {};
+        const maxSpeed = typeof c.maxSpeed === 'number' ? c.maxSpeed : 150;
+        const reverse = Boolean(c.reverse);
+        const raw = Math.round(Number(byId.get(motorId) ?? 0));
+        const signed = reverse ? -raw : raw;
+        await ipc.invoke('jimu:rotateMotorSigned', { id: motorId, speed: signed, maxSpeed, durationMs: ms });
+      }
+    };
+
     const stopMotor = async (id) => {
       if (!ipc) throw new Error('IPC unavailable');
       if (isCancelled()) return;
@@ -774,6 +802,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       rotateServoMulti,
       stopServo,
       rotateMotor,
+      rotateMotorsTimed,
       stopMotor,
       readIR,
       readUltrasonicCm,
