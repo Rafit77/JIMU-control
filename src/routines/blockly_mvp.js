@@ -20,6 +20,12 @@ const getIdOptions = (kind) => {
   return [['(none)', '0']];
 };
 
+const getNumericIdOptions = (kind) =>
+  getIdOptions(kind)
+    .map(([, v]) => Number(v))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .sort((a, b) => a - b);
+
 const defineBlocksOnce = (() => {
   let done = false;
   return () => {
@@ -135,6 +141,19 @@ const defineBlocksOnce = (() => {
     ]);
 
     const makeIdDropdown = (kind) => new Blockly.FieldDropdown(() => getIdOptions(kind));
+    const appendEyesMaskInput = (block) => {
+      const ids = getNumericIdOptions('eyes');
+      const row = block.appendDummyInput().appendField('eyes');
+      if (!ids.length) {
+        row.appendField(new Blockly.FieldLabelSerializable('(none)'));
+        return;
+      }
+      ids.forEach((id) => {
+        row.appendField(new Blockly.FieldCheckbox(id === ids[0] ? 'TRUE' : 'FALSE'), `EYE_${id}`);
+        row.appendField(String(id));
+        row.appendField(new Blockly.FieldLabelSerializable(' '));
+      });
+    };
 
     Blockly.Blocks.jimu_set_servo_timed = {
       init() {
@@ -264,11 +283,9 @@ const defineBlocksOnce = (() => {
     // Show blocks (dynamic module dropdowns)
     Blockly.Blocks.jimu_eye_color = {
       init() {
-        this.appendDummyInput()
-          .appendField('eye LED')
-          .appendField(makeIdDropdown('eyes'), 'ID')
-          .appendField('color')
-          .appendField(new Blockly.FieldColour('#00ff00'), 'HEX');
+        this.appendDummyInput().appendField('eye LED');
+        appendEyesMaskInput(this);
+        this.appendDummyInput().appendField('color').appendField(new Blockly.FieldColour('#00ff00'), 'HEX');
         this.setPreviousStatement(true);
         this.setNextStatement(true);
         this.setColour(110);
@@ -277,11 +294,9 @@ const defineBlocksOnce = (() => {
     };
     Blockly.Blocks.jimu_eye_color_duration = {
       init() {
-        this.appendDummyInput()
-          .appendField('eye LED')
-          .appendField(makeIdDropdown('eyes'), 'ID')
-          .appendField('color')
-          .appendField(new Blockly.FieldColour('#00ff00'), 'HEX');
+        this.appendDummyInput().appendField('eye LED');
+        appendEyesMaskInput(this);
+        this.appendDummyInput().appendField('color').appendField(new Blockly.FieldColour('#00ff00'), 'HEX');
         this.appendValueInput('DUR').setCheck('Number').appendField('duration').appendField('ms');
         this.setPreviousStatement(true);
         this.setNextStatement(true);
@@ -291,9 +306,9 @@ const defineBlocksOnce = (() => {
     };
     Blockly.Blocks.jimu_eye_scene = {
       init() {
+        this.appendDummyInput().appendField('eye LED');
+        appendEyesMaskInput(this);
         this.appendDummyInput()
-          .appendField('eye LED')
-          .appendField(makeIdDropdown('eyes'), 'ID')
           .appendField('color')
           .appendField(new Blockly.FieldColour('#00ff00'), 'HEX')
           .appendField('scene')
@@ -321,7 +336,9 @@ const defineBlocksOnce = (() => {
 
     Blockly.Blocks.jimu_eye_custom = {
       init() {
-        this.appendDummyInput().appendField('eye LED').appendField(makeIdDropdown('eyes'), 'ID').appendField('custom');
+        this.appendDummyInput().appendField('eye LED');
+        appendEyesMaskInput(this);
+        this.appendDummyInput().appendField('custom');
         // Compass-like layout (3 rows)
         appendSegPickerRow(this, ['NW', 'N', 'NE']);
         // Add spacing so E looks on the right side (not touching W)
@@ -339,7 +356,9 @@ const defineBlocksOnce = (() => {
     };
     Blockly.Blocks.jimu_eye_custom_duration = {
       init() {
-        this.appendDummyInput().appendField('eye LED').appendField(makeIdDropdown('eyes'), 'ID').appendField('custom');
+        this.appendDummyInput().appendField('eye LED');
+        appendEyesMaskInput(this);
+        this.appendDummyInput().appendField('custom');
         appendSegPickerRow(this, ['NW', 'N', 'NE']);
         const row = this.appendDummyInput();
         row.appendField(new Blockly.FieldLabelSerializable(' '));
@@ -356,7 +375,9 @@ const defineBlocksOnce = (() => {
     };
     Blockly.Blocks.jimu_eye_off = {
       init() {
-        this.appendDummyInput().appendField('eye LED').appendField(makeIdDropdown('eyes'), 'ID').appendField('off');
+        this.appendDummyInput().appendField('eye LED');
+        appendEyesMaskInput(this);
+        this.appendDummyInput().appendField('off');
         this.setPreviousStatement(true);
         this.setNextStatement(true);
         this.setColour(110);
@@ -458,44 +479,62 @@ const defineBlocksOnce = (() => {
       return `api.selectAction(${JSON.stringify(name)});\n`;
     };
     javascriptGenerator.forBlock.jimu_eye_color = (block) => {
-      const id = Number(block.getFieldValue('ID') || 1);
       const hex = String(block.getFieldValue('HEX') || '#000000');
-      return `await api.eyeColor(${id}, ${JSON.stringify(hex)});\n`;
+      let eyesMask = 0;
+      for (let id = 1; id <= 8; id += 1) {
+        if (String(block.getFieldValue(`EYE_${id}`) || 'FALSE') === 'TRUE') eyesMask |= 1 << (id - 1);
+      }
+      return `await api.eyeColorMask(${eyesMask}, ${JSON.stringify(hex)});\n`;
     };
     javascriptGenerator.forBlock.jimu_eye_color_duration = (block) => {
-      const id = Number(block.getFieldValue('ID') || 1);
       const hex = String(block.getFieldValue('HEX') || '#000000');
       const dur = javascriptGenerator.valueToCode(block, 'DUR', javascriptGenerator.ORDER_NONE) || '400';
-      return `await api.eyeColorFor(${id}, ${JSON.stringify(hex)}, ${dur});\n`;
+      let eyesMask = 0;
+      for (let id = 1; id <= 8; id += 1) {
+        if (String(block.getFieldValue(`EYE_${id}`) || 'FALSE') === 'TRUE') eyesMask |= 1 << (id - 1);
+      }
+      return `await api.eyeColorForMask(${eyesMask}, ${JSON.stringify(hex)}, ${dur});\n`;
     };
     javascriptGenerator.forBlock.jimu_eye_scene = (block) => {
-      const id = Number(block.getFieldValue('ID') || 1);
       const hex = String(block.getFieldValue('HEX') || '#000000');
       const scene = Number(block.getFieldValue('SCENE') || 1);
       const repeat = Number(block.getFieldValue('REPEAT') || 1);
       const wait = String(block.getFieldValue('WAIT') || 'FALSE') === 'TRUE';
-      return `await api.eyeScene(${id}, ${scene}, ${repeat}, ${wait}, ${JSON.stringify(hex)});\n`;
+      let eyesMask = 0;
+      for (let id = 1; id <= 8; id += 1) {
+        if (String(block.getFieldValue(`EYE_${id}`) || 'FALSE') === 'TRUE') eyesMask |= 1 << (id - 1);
+      }
+      return `await api.eyeSceneMask(${eyesMask}, ${scene}, ${repeat}, ${wait}, ${JSON.stringify(hex)});\n`;
     };
     javascriptGenerator.forBlock.jimu_eye_custom = (block) => {
-      const id = Number(block.getFieldValue('ID') || 1);
       const colors = {};
       segLabels.forEach((lbl) => {
         colors[lbl] = String(block.getFieldValue(`C_${lbl}`) || '#000000');
       });
-      return `await api.eyeCustom8(${id}, ${JSON.stringify(colors)});\n`;
+      let eyesMask = 0;
+      for (let id = 1; id <= 8; id += 1) {
+        if (String(block.getFieldValue(`EYE_${id}`) || 'FALSE') === 'TRUE') eyesMask |= 1 << (id - 1);
+      }
+      return `await api.eyeCustom8Mask(${eyesMask}, ${JSON.stringify(colors)});\n`;
     };
     javascriptGenerator.forBlock.jimu_eye_custom_duration = (block) => {
-      const id = Number(block.getFieldValue('ID') || 1);
       const dur = javascriptGenerator.valueToCode(block, 'DUR', javascriptGenerator.ORDER_NONE) || '400';
       const colors = {};
       segLabels.forEach((lbl) => {
         colors[lbl] = String(block.getFieldValue(`C_${lbl}`) || '#000000');
       });
-      return `await api.eyeCustom8For(${id}, ${JSON.stringify(colors)}, ${dur});\n`;
+      let eyesMask = 0;
+      for (let id = 1; id <= 8; id += 1) {
+        if (String(block.getFieldValue(`EYE_${id}`) || 'FALSE') === 'TRUE') eyesMask |= 1 << (id - 1);
+      }
+      return `await api.eyeCustom8ForMask(${eyesMask}, ${JSON.stringify(colors)}, ${dur});\n`;
     };
     javascriptGenerator.forBlock.jimu_eye_off = (block) => {
-      const id = Number(block.getFieldValue('ID') || 1);
-      return `await api.eyeOff(${id});\n`;
+      let eyesMask = 0;
+      for (let id = 1; id <= 8; id += 1) {
+        if (String(block.getFieldValue(`EYE_${id}`) || 'FALSE') === 'TRUE') eyesMask |= 1 << (id - 1);
+      }
+      return `await api.eyeOffMask(${eyesMask});\n`;
     };
     javascriptGenerator.forBlock.jimu_us_led_color = (block) => {
       const id = Number(block.getFieldValue('ID') || 1);

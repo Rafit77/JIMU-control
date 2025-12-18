@@ -523,25 +523,27 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       appendTrace(`Selected action: ${String(name || '')}`);
     };
 
-    const eyeColor = async (id, hex) => {
+    const eyeColorMask = async (eyesMask, hex) => {
       if (!ipc) throw new Error('IPC unavailable');
       if (isCancelled()) return;
       const { r, g, b } = hexToRgb(hex);
-      const eyesMask = eyeIdToMask(id);
-      await ipc.invoke('jimu:setEyeColor', { eyesMask, time: 0xff, r, g, b });
+      const mask = clamp(Number(eyesMask ?? 0), 0, 0xff);
+      if (!mask) return;
+      await ipc.invoke('jimu:setEyeColor', { eyesMask: mask, time: 0xff, r, g, b });
     };
 
-    const eyeOff = async (id) => {
+    const eyeOffMask = async (eyesMask) => {
       if (!ipc) throw new Error('IPC unavailable');
       if (isCancelled()) return;
-      const eyesMask = eyeIdToMask(id);
-      await ipc.invoke('jimu:setEyeOff', { eyesMask });
+      const mask = clamp(Number(eyesMask ?? 0), 0, 0xff);
+      if (!mask) return;
+      await ipc.invoke('jimu:setEyeOff', { eyesMask: mask });
     };
 
-    const eyeColorFor = async (id, hex, durationMs = 400) => {
-      await eyeColor(id, hex);
+    const eyeColorForMask = async (eyesMask, hex, durationMs = 400) => {
+      await eyeColorMask(eyesMask, hex);
       await wait(clamp(Number(durationMs ?? 400), 0, 60_000));
-      await eyeOff(id);
+      await eyeOffMask(eyesMask);
     };
 
     const eyeCustom = async (id, segMask, hex) => {
@@ -556,16 +558,17 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     const eyeCustomFor = async (id, segMask, hex, durationMs = 400) => {
       await eyeCustom(id, segMask, hex);
       await wait(clamp(Number(durationMs ?? 400), 0, 60_000));
-      await eyeOff(id);
+      await eyeOffMask(eyeIdToMask(id));
     };
 
-    const eyeScene = async (id, scene, repeat, waitFor, hex) => {
+    const eyeSceneMask = async (eyesMask, scene, repeat, waitFor, hex) => {
       if (!ipc) throw new Error('IPC unavailable');
       if (isCancelled()) return;
       const { r, g, b } = hexToRgb(hex);
-      const eyesMask = eyeIdToMask(id);
+      const mask = clamp(Number(eyesMask ?? 0), 0, 0xff);
+      if (!mask) return;
       await ipc.invoke('jimu:setEyeAnimation', {
-        eyesMask,
+        eyesMask: mask,
         animationId: clamp(Number(scene ?? 1), 1, 15),
         repetitions: clamp(Number(repeat ?? 1), 1, 255),
         r,
@@ -610,23 +613,24 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       appendTrace(`Display "${String(name || '')}": ${String(value)}`);
     };
 
-    const eyeCustom8 = async (id, colorsByPos) => {
+    const eyeCustom8Mask = async (eyesMask, colorsByPos) => {
       if (!ipc) throw new Error('IPC unavailable');
       if (isCancelled()) return;
-      const eyesMask = eyeIdToMask(id);
+      const maskAll = clamp(Number(eyesMask ?? 0), 0, 0xff);
+      if (!maskAll) return;
       const entries = eyeSegmentCompassOrder.map((pos) => {
         const hex = colorsByPos?.[pos] || '#000000';
         const { r, g, b } = hexToRgb(hex);
         const mask = eyeSegmentMaskForCompass(pos);
         return { r, g, b, mask };
       });
-      await ipc.invoke('jimu:setEyeSegments', { eyesMask, time: 0xff, entries });
+      await ipc.invoke('jimu:setEyeSegments', { eyesMask: maskAll, time: 0xff, entries });
     };
 
-    const eyeCustom8For = async (id, colorsByPos, durationMs = 400) => {
-      await eyeCustom8(id, colorsByPos);
+    const eyeCustom8ForMask = async (eyesMask, colorsByPos, durationMs = 400) => {
+      await eyeCustom8Mask(eyesMask, colorsByPos);
       await wait(clamp(Number(durationMs ?? 400), 0, 60_000));
-      await eyeOff(id);
+      await eyeOffMask(eyesMask);
     };
 
     const allStop = async () => {
@@ -690,14 +694,14 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       getJoystick,
       getSwitch,
       selectAction,
-      eyeColor,
-      eyeColorFor,
-      eyeScene,
+      eyeColorMask,
+      eyeColorForMask,
+      eyeSceneMask,
       eyeCustom,
       eyeCustomFor,
-      eyeCustom8,
-      eyeCustom8For,
-      eyeOff,
+      eyeCustom8Mask,
+      eyeCustom8ForMask,
+      eyeOffMask,
       usLedColor,
       usLedOff,
       indicatorColor,
