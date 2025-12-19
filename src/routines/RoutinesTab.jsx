@@ -36,7 +36,22 @@ const eyeSegmentMaskForCompass = (pos) => {
 
 const RoutineNameDialog = ({ open, title, initialName, onCancel, onSubmit }) => {
   const [name, setName] = useState(initialName || '');
+  const inputRef = useRef(null);
   useEffect(() => setName(initialName || ''), [initialName, open]);
+  useEffect(() => {
+    if (!open) return;
+    // `autoFocus` is unreliable in Electron/React; focus explicitly.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        try {
+          inputRef.current?.focus?.({ preventScroll: true });
+          inputRef.current?.select?.();
+        } catch (_) {
+          // ignore
+        }
+      });
+    });
+  }, [open]);
   if (!open) return null;
   return (
     <div
@@ -59,10 +74,14 @@ const RoutineNameDialog = ({ open, title, initialName, onCancel, onSubmit }) => 
           <label>
             Name
             <input
+              ref={inputRef}
               style={{ width: '100%', padding: 8, boxSizing: 'border-box' }}
               value={name}
               onChange={(e) => setName(e.target.value)}
-              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') onCancel();
+                if (e.key === 'Enter') onSubmit(name);
+              }}
             />
           </label>
         </div>
@@ -482,6 +501,8 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       if (!evt) return;
       if (evt.isUiEvent) return;
       if (evt.type === Blockly.Events.FINISHED_LOADING) return;
+      // Avoid marking "unsaved" on non-content events that can happen on open/resize.
+      if (evt.type === Blockly.Events.VIEWPORT_CHANGE || evt.type === 'viewport_change') return;
       if (evt.type === Blockly.Events.VAR_CREATE) {
         try {
           const v = ws.getVariableById?.(evt.varId);
@@ -498,8 +519,13 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       setEditorDirty(true);
     };
     ws.addChangeListener(onChange);
-    suppressDirtyRef.current = false;
     setEditorDirty(false);
+    // Release suppression after Blockly emits any async init events.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        suppressDirtyRef.current = false;
+      });
+    });
 
     return () => {
       try {
