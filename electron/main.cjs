@@ -133,7 +133,19 @@ const saveProject = async ({ id, data }) => {
   await ensureDir(path.join(projectDir, 'assets'));
   await ensureDir(path.join(projectDir, 'routines'));
   const now = new Date().toISOString();
+  // Preserve routines from disk.
+  // Routines are managed via `routine:*` IPC calls (XML files + list metadata),
+  // and the UI's `project:save` payload may be stale and would otherwise clobber them.
+  let preservedRoutines = null;
+  try {
+    const existing = await readJson(path.join(projectDir, 'project.json'));
+    if (Array.isArray(existing?.routines)) preservedRoutines = existing.routines;
+  } catch (_) {
+    // ignore (project.json may not exist yet)
+  }
+
   const next = { ...(data || {}), updatedAt: now };
+  if (preservedRoutines) next.routines = preservedRoutines;
   if (!next.createdAt) next.createdAt = now;
   if (!next.schemaVersion) next.schemaVersion = 1;
   await writeJson(path.join(projectDir, 'project.json'), next);
