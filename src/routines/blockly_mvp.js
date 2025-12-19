@@ -34,6 +34,25 @@ const defineBlocksOnce = (() => {
 
     Blockly.setLocale(en);
 
+    // Ensure Variables "set" blocks have a default value shadow (=0).
+    const patchDefaultValueShadow = (type) => {
+      const def = Blockly?.Blocks?.[type];
+      if (!def || typeof def.init !== 'function' || def.__jimuPatchedDefaultShadow) return;
+      const origInit = def.init;
+      def.init = function () {
+        origInit.call(this);
+        const input = this.getInput?.('VALUE');
+        const conn = input?.connection;
+        if (!conn) return;
+        if (conn.targetConnection) return;
+        if (typeof conn.getShadowState === 'function' && conn.getShadowState()) return;
+        conn.setShadowState?.({ type: 'math_number', fields: { NUM: 0 } });
+      };
+      def.__jimuPatchedDefaultShadow = true;
+    };
+    patchDefaultValueShadow('variables_set');
+    patchDefaultValueShadow('variables_set_dynamic');
+
     Blockly.common.defineBlocksWithJsonArray([
       {
         type: 'jimu_wait',
