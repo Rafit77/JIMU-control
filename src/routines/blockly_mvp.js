@@ -1058,13 +1058,15 @@ const defineBlocksOnce = (() => {
     };
     // Variables: route through api so the Variables dialog can show live values.
     javascriptGenerator.forBlock.variables_get = (block) => {
-      const varId = String(block.getFieldValue('VAR') || '');
-      return [`api.varGet(${JSON.stringify(varId)})`, javascriptGenerator.ORDER_ATOMIC];
+      const field = block.getField('VAR');
+      const name = typeof field?.getText === 'function' ? field.getText() : String(block.getFieldValue('VAR') || '');
+      return [`api.varGet(${JSON.stringify(String(name || ''))})`, javascriptGenerator.ORDER_ATOMIC];
     };
     javascriptGenerator.forBlock.variables_set = (block) => {
-      const varId = String(block.getFieldValue('VAR') || '');
+      const field = block.getField('VAR');
+      const name = typeof field?.getText === 'function' ? field.getText() : String(block.getFieldValue('VAR') || '');
       const value = javascriptGenerator.valueToCode(block, 'VALUE', javascriptGenerator.ORDER_ASSIGNMENT) || '0';
-      return `api.varSet(${JSON.stringify(varId)}, ${value});\n`;
+      return `api.varSet(${JSON.stringify(String(name || ''))}, ${value});\n`;
     };
     javascriptGenerator.forBlock.variables_get_dynamic = javascriptGenerator.forBlock.variables_get;
     javascriptGenerator.forBlock.variables_set_dynamic = javascriptGenerator.forBlock.variables_set;

@@ -2,6 +2,7 @@ import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo
 import * as Blockly from 'blockly';
 import { createWorkspace, setIdOptionsProvider, workspaceToAsyncJs, workspaceToXmlText } from './blockly_mvp.js';
 import { batteryPercentFromVolts } from '../battery.js';
+import * as globalVars from './global_vars.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const hexToRgb = (hex) => {
@@ -69,7 +70,7 @@ const RoutineNameDialog = ({ open, title, initialName, onCancel, onSubmit }) => 
   );
 };
 
-const VariablesDialog = ({ open, workspace, getVarValue, onClose }) => {
+const VariablesDialog = ({ open, workspace, getVarValue, isVarUsedElsewhere, onClose }) => {
   const [newName, setNewName] = useState('');
   const [varsVersion, bumpVarsVersion] = useState(0);
 
@@ -160,16 +161,8 @@ const VariablesDialog = ({ open, workspace, getVarValue, onClose }) => {
                 <input
                   style={{ flex: 1, padding: 6 }}
                   value={v.name}
-                  onChange={(e) => {
-                    if (!workspace) return;
-                    const next = String(e.target.value ?? '');
-                    if (!next.trim()) return;
-                    try {
-                      workspace.renameVariableById(v.id, next);
-                    } catch (_) {
-                      // ignore (duplicate etc)
-                    }
-                  }}
+                  readOnly
+                  title="Variables are global across routines; rename is disabled to keep cross-routine references stable."
                 />
                 <span
                   style={{
@@ -180,13 +173,17 @@ const VariablesDialog = ({ open, workspace, getVarValue, onClose }) => {
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                   }}
-                  title={formatValue(getVarValue?.(v.id))}
+                  title={formatValue(getVarValue?.(v.name))}
                 >
-                  = {formatValue(getVarValue?.(v.id))}
+                  = {formatValue(getVarValue?.(v.name))}
                 </span>
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     if (!workspace) return;
+                    if (isVarUsedElsewhere?.(v.name)) {
+                      window.alert(`Cannot delete "${v.name}" because it is used by another routine.`);
+                      return;
+                    }
                     const ok = window.confirm(`Delete variable "${v.name}"?`);
                     if (!ok) return;
                     try {
@@ -227,11 +224,11 @@ const RoutinesTab = forwardRef(function RoutinesTab(
   const [nameDialog, setNameDialog] = useState({ open: false, mode: 'create', routineId: null, initialName: '' });
   const [varsOpen, setVarsOpen] = useState(false);
   const [, bumpVarsVersion] = useState(0);
+  const [varsUsedElsewhere, setVarsUsedElsewhere] = useState(() => new Set());
 
   const workspaceRef = useRef(null);
   const hostRef = useRef(null);
   const cancelRef = useRef({ cancel: () => {} });
-  const varStoreRef = useRef(new Map()); // key: Blockly variable id, value: runtime value
 
   const refreshList = useCallback(async () => {
     if (!ipc || !projectId) return;
@@ -889,10 +886,10 @@ const RoutinesTab = forwardRef(function RoutinesTab(
         await wait(extra);
       },
       varGet: (varId) => {
-        return varStoreRef.current.get(String(varId ?? ''));
+        return globalVars.varGet(varId);
       },
       varSet: (varId, value) => {
-      varStoreRef.current.set(String(varId ?? ''), value);
+        globalVars.varSet(varId, value);
         bumpVarsVersion((v) => v + 1);
       },
       wait,
@@ -941,7 +938,6 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     if (!editorRoutine) return;
     const ws = workspaceRef.current;
     if (!ws) return;
-    varStoreRef.current.clear();
     bumpVarsVersion((v) => v + 1);
     try {
       ws.highlightBlock?.(null);
@@ -1014,7 +1010,6 @@ const RoutinesTab = forwardRef(function RoutinesTab(
           setRunState('idle');
           setRunError(null);
           setTrace([]);
-          varStoreRef.current.clear();
           bumpVarsVersion((v) => v + 1);
         }}
       >
@@ -1170,7 +1165,8 @@ const RoutinesTab = forwardRef(function RoutinesTab(
           <VariablesDialog
             open={varsOpen}
             workspace={workspaceRef.current}
-            getVarValue={(varId) => varStoreRef.current.get(String(varId ?? ''))}
+            getVarValue={(varName) => globalVars.varGet(String(varName ?? ''))}
+            isVarUsedElsewhere={(varName) => varsUsedElsewhere.has(String(varName ?? '').trim())}
             onClose={() => setVarsOpen(false)}
           />
         </div>
@@ -1206,3 +1202,32 @@ const RoutinesTab = forwardRef(function RoutinesTab(
 });
 
 export default RoutinesTab;
+  useEffect(() => {
+    const run = async () => {
+      if (!varsOpen || !ipc || !projectId || !editorRoutine?.id) {
+        setVarsUsedElsewhere(new Set());
+        return;
+      }
+      try {
+        const list = await ipc.invoke('routine:list', { projectId });
+        const routines = Array.isArray(list) ? list : [];
+        const used = new Set();
+        const currentId = editorRoutine.id;
+        const re = /<field[^>]*name="VAR"[^>]*>([\s\S]*?)<\/field>/g;
+        for (const r of routines) {
+          if (!r?.id || r.id === currentId) continue;
+          const res = await ipc.invoke('routine:loadXml', { projectId, routineId: r.id });
+          const xml = String(res?.xml || '');
+          let m;
+          while ((m = re.exec(xml))) {
+            const name = String(m[1] || '').trim();
+            if (name) used.add(name);
+          }
+        }
+        setVarsUsedElsewhere(used);
+      } catch (_) {
+        setVarsUsedElsewhere(new Set());
+      }
+    };
+    run();
+  }, [varsOpen, ipc, projectId, editorRoutine?.id]);

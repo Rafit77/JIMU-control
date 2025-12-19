@@ -92,7 +92,16 @@ Notes:
 - Create variables from the Variables category (Blockly built-in).
 - `set [variable] to [value]`: assign variable.
 - `get [variable]`: read variable value.
-- Variables dialog in the editor: Create / Rename / Delete variables.
+
+Global variables (important):
+- Variables are **global per project** and shared between routines in real time (used for inter-routine communication).
+- Variables are keyed by **variable name** (not Blockly internal IDs), so using the same name in two routines refers to the same global value.
+- Current implementation stores values in RAM (future: load initial values from `project.json` variables).
+
+Variables dialog rules:
+- Shows current value as `= <value>` on the right side.
+- Rename is disabled (to keep cross-routine references stable).
+- Delete is blocked if the variable name is used by another routine.
 
 ### Sensors
 - `read IR [id]` (`jimu_read_ir`) returns a number
