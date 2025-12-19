@@ -5,6 +5,23 @@ import jsPkg from 'blockly/javascript.js';
 
 const { javascriptGenerator } = jsPkg;
 
+const xmlTextToDom = (xmlText) => {
+  const text = String(xmlText ?? '');
+  if (Blockly?.Xml?.textToDom) return Blockly.Xml.textToDom(text);
+  if (Blockly?.utils?.xml?.textToDom) return Blockly.utils.xml.textToDom(text);
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(text, 'text/xml');
+  const err = doc.getElementsByTagName('parsererror')?.[0];
+  if (err) throw new Error(err.textContent || 'Invalid XML');
+  return doc.documentElement;
+};
+
+const xmlDomToText = (dom) => {
+  if (Blockly?.Xml?.domToText) return Blockly.Xml.domToText(dom);
+  if (Blockly?.utils?.xml?.domToText) return Blockly.utils.xml.domToText(dom);
+  return new XMLSerializer().serializeToString(dom);
+};
+
 let idOptionsProvider = null;
 export const setIdOptionsProvider = (fn) => {
   idOptionsProvider = typeof fn === 'function' ? fn : null;
@@ -1405,7 +1422,7 @@ export const createWorkspace = (el, { initialXmlText } = {}) => {
 
   if (initialXmlText) {
     try {
-      const dom = Blockly.Xml.textToDom(initialXmlText);
+      const dom = xmlTextToDom(initialXmlText);
       Blockly.Xml.domToWorkspace(dom, workspace);
     } catch (e) {
       console.error('Failed to load routine XML into Blockly workspace.', e);
@@ -1419,7 +1436,7 @@ export const createWorkspace = (el, { initialXmlText } = {}) => {
 export const workspaceToXmlText = (workspace) => {
   defineBlocksOnce();
   const dom = Blockly.Xml.workspaceToDom(workspace);
-  return `${Blockly.Xml.domToText(dom)}\n`;
+  return `${xmlDomToText(dom)}\n`;
 };
 
 export const workspaceToAsyncJs = (workspace, { debug = false } = {}) => {
