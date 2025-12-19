@@ -3,6 +3,8 @@ import * as Slider from '@radix-ui/react-slider';
 import RoutinesTab from './routines/RoutinesTab.jsx';
 import { batteryPercentFromVolts } from './battery.js';
 import * as globalVars from './routines/global_vars.js';
+import servoIconUrl from '../media/servo-icon.png';
+import wheelIconUrl from '../media/wheel-icon.png';
 
 const Section = ({ title, children, style }) => (
   <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 12, marginBottom: 12, ...(style || {}) }}>
@@ -1235,6 +1237,10 @@ export default function App() {
                         const liveIds = modules?.servos || [];
                         const isLive = isConnected && liveIds.includes(id);
                         const statusKind = getModuleStatusKind(id, savedIds, liveIds, { connected: isConnected });
+                        const cfg = currentProject?.data?.calibration?.servoConfig?.[id] || {};
+                        const mode = String(cfg?.mode || 'servo');
+                        const showServoIcon = mode === 'servo' || mode === 'mixed' || !mode;
+                        const showWheelIcon = mode === 'motor' || mode === 'mixed';
                         return (
                           <button
                             key={`sv${id}`}
@@ -1281,7 +1287,31 @@ export default function App() {
                             style={moduleButtonStyle(statusKind, isLive)}
                             title={statusKind}
                           >
-                            Servo {id}
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                              <span>Servo {id}</span>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginLeft: 2 }}>
+                                {showServoIcon ? (
+                                  <img
+                                    src={servoIconUrl}
+                                    width={14}
+                                    height={14}
+                                    style={{ display: 'block' }}
+                                    alt="servo mode"
+                                    title="servo/mixed mode"
+                                  />
+                                ) : null}
+                                {showWheelIcon ? (
+                                  <img
+                                    src={wheelIconUrl}
+                                    width={14}
+                                    height={14}
+                                    style={{ display: 'block' }}
+                                    alt="motor mode"
+                                    title="motor/mixed mode"
+                                  />
+                                ) : null}
+                              </span>
+                            </span>
                           </button>
                         );
                       }) || <span>none</span>}
