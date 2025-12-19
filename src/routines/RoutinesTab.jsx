@@ -69,7 +69,7 @@ const RoutineNameDialog = ({ open, title, initialName, onCancel, onSubmit }) => 
   );
 };
 
-const VariablesDialog = ({ open, workspace, onClose }) => {
+const VariablesDialog = ({ open, workspace, getVarValue, onClose }) => {
   const [newName, setNewName] = useState('');
   const vars = useMemo(() => {
     if (!workspace) return [];
@@ -77,6 +77,20 @@ const VariablesDialog = ({ open, workspace, onClose }) => {
   }, [workspace, open]);
 
   if (!open) return null;
+
+  const formatValue = (v) => {
+    if (v === undefined) return '—';
+    if (v === null) return 'null';
+    if (typeof v === 'string') return JSON.stringify(v);
+    if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+    try {
+      const s = JSON.stringify(v);
+      return s.length > 60 ? `${s.slice(0, 57)}...` : s;
+    } catch (_) {
+      const s = String(v);
+      return s.length > 60 ? `${s.slice(0, 57)}...` : s;
+    }
+  };
 
   return (
     <div
@@ -139,6 +153,19 @@ const VariablesDialog = ({ open, workspace, onClose }) => {
                     }
                   }}
                 />
+                <span
+                  style={{
+                    minWidth: 220,
+                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                    color: '#555',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                  title={formatValue(getVarValue?.(v.id))}
+                >
+                  = {formatValue(getVarValue?.(v.id))}
+                </span>
                 <button
                   onClick={() => {
                     if (!workspace) return;
@@ -181,10 +208,12 @@ const RoutinesTab = forwardRef(function RoutinesTab(
   const [workspaceReady, setWorkspaceReady] = useState(false);
   const [nameDialog, setNameDialog] = useState({ open: false, mode: 'create', routineId: null, initialName: '' });
   const [varsOpen, setVarsOpen] = useState(false);
+  const [, bumpVarsVersion] = useState(0);
 
   const workspaceRef = useRef(null);
   const hostRef = useRef(null);
   const cancelRef = useRef({ cancel: () => {} });
+  const varStoreRef = useRef(new Map()); // key: Blockly variable id, value: runtime value
 
   const refreshList = useCallback(async () => {
     if (!ipc || !projectId) return;
@@ -841,6 +870,13 @@ const RoutinesTab = forwardRef(function RoutinesTab(
         if (t === 'jimu_wait' || t === 'jimu_wait_until') return;
         await wait(extra);
       },
+      varGet: (varId) => {
+        return varStoreRef.current.get(String(varId ?? ''));
+      },
+      varSet: (varId, value) => {
+      varStoreRef.current.set(String(varId ?? ''), value);
+        bumpVarsVersion((v) => v + 1);
+      },
       wait,
       setServoPosition,
       setServoPositionsTimed,
@@ -887,6 +923,8 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     if (!editorRoutine) return;
     const ws = workspaceRef.current;
     if (!ws) return;
+    varStoreRef.current.clear();
+    bumpVarsVersion((v) => v + 1);
     try {
       ws.highlightBlock?.(null);
     } catch (_) {
@@ -958,6 +996,8 @@ const RoutinesTab = forwardRef(function RoutinesTab(
           setRunState('idle');
           setRunError(null);
           setTrace([]);
+          varStoreRef.current.clear();
+          bumpVarsVersion((v) => v + 1);
         }}
       >
         Back
@@ -1109,7 +1149,12 @@ const RoutinesTab = forwardRef(function RoutinesTab(
               </div>
             </div>
           </div>
-          <VariablesDialog open={varsOpen} workspace={workspaceRef.current} onClose={() => setVarsOpen(false)} />
+          <VariablesDialog
+            open={varsOpen}
+            workspace={workspaceRef.current}
+            getVarValue={(varId) => varStoreRef.current.get(String(varId ?? ''))}
+            onClose={() => setVarsOpen(false)}
+          />
         </div>
       )}
 

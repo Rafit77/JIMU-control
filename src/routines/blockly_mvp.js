@@ -1056,6 +1056,18 @@ const defineBlocksOnce = (() => {
       const t = javascriptGenerator.valueToCode(block, 'TEXT', javascriptGenerator.ORDER_NONE) || "''";
       return `api.log(${t});\n`;
     };
+    // Variables: route through api so the Variables dialog can show live values.
+    javascriptGenerator.forBlock.variables_get = (block) => {
+      const varId = String(block.getFieldValue('VAR') || '');
+      return [`api.varGet(${JSON.stringify(varId)})`, javascriptGenerator.ORDER_ATOMIC];
+    };
+    javascriptGenerator.forBlock.variables_set = (block) => {
+      const varId = String(block.getFieldValue('VAR') || '');
+      const value = javascriptGenerator.valueToCode(block, 'VALUE', javascriptGenerator.ORDER_ASSIGNMENT) || '0';
+      return `api.varSet(${JSON.stringify(varId)}, ${value});\n`;
+    };
+    javascriptGenerator.forBlock.variables_get_dynamic = javascriptGenerator.forBlock.variables_get;
+    javascriptGenerator.forBlock.variables_set_dynamic = javascriptGenerator.forBlock.variables_set;
     javascriptGenerator.forBlock.jimu_emergency_stop = () => 'await api.emergencyStop();\n';
     javascriptGenerator.forBlock.jimu_set_servo_timed = (block) => {
       const dur = javascriptGenerator.valueToCode(block, 'DUR', javascriptGenerator.ORDER_NONE) || '400';
