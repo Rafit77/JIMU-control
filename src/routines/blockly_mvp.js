@@ -34,25 +34,6 @@ const defineBlocksOnce = (() => {
 
     Blockly.setLocale(en);
 
-    // In Electron (hardened), window.prompt() is unavailable. Blockly's default
-    // "Create variable" flyout button uses prompt; we route it to the app's
-    // Variables dialog instead (workspace.__jimuOpenVarsDialog).
-    if (Blockly?.Variables?.createVariableButtonHandler && !Blockly.Variables.__jimuPatchedCreateVariableButtonHandler) {
-      const orig = Blockly.Variables.createVariableButtonHandler;
-      Blockly.Variables.createVariableButtonHandler = (workspace, ...rest) => {
-        try {
-          if (workspace?.__jimuOpenVarsDialog) {
-            workspace.__jimuOpenVarsDialog();
-            return;
-          }
-        } catch (_) {
-          // ignore
-        }
-        return orig(workspace, ...rest);
-      };
-      Blockly.Variables.__jimuPatchedCreateVariableButtonHandler = true;
-    }
-
     // Ensure Variables "set" blocks have a default value shadow (=0).
     const patchDefaultValueShadow = (type) => {
       const def = Blockly?.Blocks?.[type];
@@ -1338,7 +1319,9 @@ export const getBlocklyToolbox = () => {
           { kind: 'block', type: 'logic_negate' },
         ],
       },
-      { kind: 'category', name: 'Variables', custom: 'VARIABLE', categorystyle: 'variable_category' },
+      // Note: use a custom callback that does NOT render Blockly's "Create variable" button
+      // (Electron disables prompt()).
+      { kind: 'category', name: 'Variables', custom: 'JIMU_VARIABLES', categorystyle: 'variable_category' },
       {
         kind: 'category',
         name: 'Sensors',
@@ -1411,6 +1394,13 @@ export const createWorkspace = (el, { initialXmlText } = {}) => {
     trashcan: true,
     grid: { spacing: 20, length: 3, colour: '#ccc', snap: true },
     zoom: { controls: true, wheel: true, startScale: 0.9, maxScale: 2.0, minScale: 0.3 },
+  });
+
+  // Variables category without the built-in "Create variable" prompt button.
+  // (The app has its own Variables dialog.)
+  workspace.registerToolboxCategoryCallback?.('JIMU_VARIABLES', (ws) => {
+    if (Blockly?.Variables?.flyoutCategoryBlocks) return Blockly.Variables.flyoutCategoryBlocks(ws);
+    return [];
   });
 
   if (initialXmlText) {
