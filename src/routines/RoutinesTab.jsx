@@ -241,6 +241,36 @@ const RoutinesTab = forwardRef(function RoutinesTab(
   }, [refreshList]);
 
   useEffect(() => {
+    const run = async () => {
+      if (!varsOpen || !ipc || !projectId || !editorRoutine?.id) {
+        setVarsUsedElsewhere(new Set());
+        return;
+      }
+      try {
+        const list = await ipc.invoke('routine:list', { projectId });
+        const routines = Array.isArray(list) ? list : [];
+        const used = new Set();
+        const currentId = editorRoutine.id;
+        const re = /<field[^>]*name="VAR"[^>]*>([\s\S]*?)<\/field>/g;
+        for (const r of routines) {
+          if (!r?.id || r.id === currentId) continue;
+          const res = await ipc.invoke('routine:loadXml', { projectId, routineId: r.id });
+          const xml = String(res?.xml || '');
+          let m;
+          while ((m = re.exec(xml))) {
+            const name = String(m[1] || '').trim();
+            if (name) used.add(name);
+          }
+        }
+        setVarsUsedElsewhere(used);
+      } catch (_) {
+        setVarsUsedElsewhere(new Set());
+      }
+    };
+    run();
+  }, [varsOpen, ipc, projectId, editorRoutine?.id]);
+
+  useEffect(() => {
     const modules = projectModules || {};
     const servos = Array.isArray(modules.servos) ? modules.servos.map(Number).filter((n) => Number.isFinite(n)) : [];
     const motors = Array.isArray(modules.motors) ? modules.motors.map(Number).filter((n) => Number.isFinite(n)) : [];
@@ -1202,32 +1232,3 @@ const RoutinesTab = forwardRef(function RoutinesTab(
 });
 
 export default RoutinesTab;
-  useEffect(() => {
-    const run = async () => {
-      if (!varsOpen || !ipc || !projectId || !editorRoutine?.id) {
-        setVarsUsedElsewhere(new Set());
-        return;
-      }
-      try {
-        const list = await ipc.invoke('routine:list', { projectId });
-        const routines = Array.isArray(list) ? list : [];
-        const used = new Set();
-        const currentId = editorRoutine.id;
-        const re = /<field[^>]*name="VAR"[^>]*>([\s\S]*?)<\/field>/g;
-        for (const r of routines) {
-          if (!r?.id || r.id === currentId) continue;
-          const res = await ipc.invoke('routine:loadXml', { projectId, routineId: r.id });
-          const xml = String(res?.xml || '');
-          let m;
-          while ((m = re.exec(xml))) {
-            const name = String(m[1] || '').trim();
-            if (name) used.add(name);
-          }
-        }
-        setVarsUsedElsewhere(used);
-      } catch (_) {
-        setVarsUsedElsewhere(new Set());
-      }
-    };
-    run();
-  }, [varsOpen, ipc, projectId, editorRoutine?.id]);
