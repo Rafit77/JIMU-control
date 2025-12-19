@@ -1079,6 +1079,16 @@ const defineBlocksOnce = (() => {
         this.setTooltip('Turn off ultrasonic LED.');
       },
     };
+    Blockly.Blocks.jimu_print = {
+      init() {
+        this.appendDummyInput().appendField('Print').appendField(new Blockly.FieldLabelSerializable(''), 'OUT');
+        this.appendValueInput('VALUE').setCheck(null).appendField('value');
+        this.setPreviousStatement(true);
+        this.setNextStatement(true);
+        this.setColour(290);
+        this.setTooltip('Show a value on the block while the routine runs.');
+      },
+    };
 
     javascriptGenerator.forBlock.jimu_wait = (block) => {
       const ms = javascriptGenerator.valueToCode(block, 'MS', javascriptGenerator.ORDER_NONE) || '0';
@@ -1091,6 +1101,10 @@ const defineBlocksOnce = (() => {
     javascriptGenerator.forBlock.jimu_log = (block) => {
       const t = javascriptGenerator.valueToCode(block, 'TEXT', javascriptGenerator.ORDER_NONE) || "''";
       return `api.log(${t});\n`;
+    };
+    javascriptGenerator.forBlock.jimu_print = (block) => {
+      const v = javascriptGenerator.valueToCode(block, 'VALUE', javascriptGenerator.ORDER_NONE) || '0';
+      return `await api.print(${JSON.stringify(block.id)}, ${v});\n`;
     };
     // Variables: route through api so the Variables dialog can show live values.
     javascriptGenerator.forBlock.variables_get = (block) => {
@@ -1399,7 +1413,15 @@ export const getBlocklyToolbox = () => {
           { kind: 'block', type: 'jimu_display_show' },
         ],
       },
-      { kind: 'category', name: 'Debug', colour: 290, contents: [{ kind: 'block', type: 'jimu_log' }] },
+      {
+        kind: 'category',
+        name: 'Debug',
+        colour: 290,
+        contents: [
+          { kind: 'block', type: 'jimu_print', inputs: { VALUE: { shadow: { type: 'math_number', fields: { NUM: 0 } } } } },
+          { kind: 'block', type: 'jimu_log' },
+        ],
+      },
     ],
   };
 };

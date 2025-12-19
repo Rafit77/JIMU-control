@@ -51,6 +51,15 @@ const RoutineNameDialog = ({ open, title, initialName, onCancel, onSubmit }) => 
         }
       });
     });
+    const t = setTimeout(() => {
+      try {
+        inputRef.current?.focus?.({ preventScroll: true });
+        inputRef.current?.select?.();
+      } catch (_) {
+        // ignore
+      }
+    }, 50);
+    return () => clearTimeout(t);
   }, [open]);
   if (!open) return null;
   return (
@@ -68,7 +77,17 @@ const RoutineNameDialog = ({ open, title, initialName, onCancel, onSubmit }) => 
         if (e.target === e.currentTarget) onCancel();
       }}
     >
-      <div style={{ background: '#fff', padding: 16, borderRadius: 10, width: 440, maxWidth: '92vw' }}>
+      <div
+        style={{ background: '#fff', padding: 16, borderRadius: 10, width: 440, maxWidth: '92vw' }}
+        onMouseDown={(e) => {
+          e.stopPropagation();
+          try {
+            inputRef.current?.focus?.({ preventScroll: true });
+          } catch (_) {
+            // ignore
+          }
+        }}
+      >
         <h3 style={{ marginTop: 0 }}>{title}</h3>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <label>
@@ -503,6 +522,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       if (evt.type === Blockly.Events.FINISHED_LOADING) return;
       // Avoid marking "unsaved" on non-content events that can happen on open/resize.
       if (evt.type === Blockly.Events.VIEWPORT_CHANGE || evt.type === 'viewport_change') return;
+      if (evt.recordUndo === false) return;
       if (evt.type === Blockly.Events.VAR_CREATE) {
         try {
           const v = ws.getVariableById?.(evt.varId);
@@ -1082,6 +1102,16 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       emergencyStop,
       batteryPercent,
       batteryCharging,
+      print: (blockId, value) => {
+        try {
+          const ws = workspaceRef.current;
+          const b = ws?.getBlockById?.(String(blockId || ''));
+          if (!b) return;
+          b.setFieldValue(String(value ?? ''), 'OUT');
+        } catch (_) {
+          // ignore
+        }
+      },
       log: (t) => {
         appendTrace(t);
         addLog?.(`[Routine] ${String(t ?? '')}`);
