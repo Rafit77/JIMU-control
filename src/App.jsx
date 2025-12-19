@@ -306,10 +306,11 @@ export default function App() {
 
   const saveCurrentProject = useCallback(async () => {
     if (!ipc || !currentProject?.id) return;
+    let routinesPayload = null;
     try {
-      await routinesRef.current?.flushToDisk?.();
+      routinesPayload = await routinesRef.current?.exportForSave?.();
     } catch (e) {
-      addLog(`Routine flush failed: ${e?.message || String(e)}`);
+      addLog(`Routine export failed: ${e?.message || String(e)}`);
     }
     const dataToSave = {
       ...(currentProject.data || {}),
@@ -320,6 +321,8 @@ export default function App() {
           return currentProject.data?.variables || {};
         }
       })(),
+      routines: Array.isArray(routinesPayload?.routines) ? routinesPayload.routines : currentProject.data?.routines || [],
+      __routineXmlById: routinesPayload?.routineXmlById || {},
       hardware: {
         ...(currentProject.data?.hardware || {}),
         modules: modules || currentProject.data?.hardware?.modules || null,

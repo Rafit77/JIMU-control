@@ -133,9 +133,8 @@ const saveProject = async ({ id, data }) => {
   await ensureDir(path.join(projectDir, 'assets'));
   await ensureDir(path.join(projectDir, 'routines'));
   const now = new Date().toISOString();
-  // Preserve routines from disk.
-  // Routines are managed via `routine:*` IPC calls (XML files + list metadata),
-  // and the UI's `project:save` payload may be stale and would otherwise clobber them.
+  // Preserve routines from disk when the UI doesn't provide them.
+  // (Older UI paths managed routines via `routine:*` IPC calls only.)
   let preservedRoutines = null;
   try {
     const existing = await readJson(path.join(projectDir, 'project.json'));
@@ -144,10 +143,42 @@ const saveProject = async ({ id, data }) => {
     // ignore (project.json may not exist yet)
   }
 
+  const routineXmlById = data && typeof data === 'object' ? data.__routineXmlById : null;
   const next = { ...(data || {}), updatedAt: now };
-  if (preservedRoutines) next.routines = preservedRoutines;
+  delete next.__routineXmlById;
+  if (!Array.isArray(next.routines) && preservedRoutines) next.routines = preservedRoutines;
   if (!next.createdAt) next.createdAt = now;
   if (!next.schemaVersion) next.schemaVersion = 1;
+
+  // If the UI provides routines + their XML, persist them as a batch.
+  // This matches the "RAM-first" model: routines are edited in RAM and only
+  // written to disk on Project Save.
+  if (Array.isArray(next.routines) && routineXmlById && typeof routineXmlById === 'object') {
+    const keepIds = new Set(next.routines.map((r) => String(r?.id || '')).filter(Boolean));
+    await ensureDir(getRoutinesDir(id));
+
+    for (const rid of keepIds) {
+      const xml = Object.prototype.hasOwnProperty.call(routineXmlById, rid) ? routineXmlById[rid] : null;
+      const body = String(xml || defaultRoutineXml());
+      await fs.writeFile(getRoutinePath(id, rid), body, 'utf8');
+    }
+
+    // Delete routine XML files that are no longer referenced by project.json.
+    try {
+      const entries = await fs.readdir(getRoutinesDir(id), { withFileTypes: true });
+      for (const e of entries) {
+        if (!e.isFile()) continue;
+        if (!e.name.endsWith('.xml')) continue;
+        const rid = e.name.slice(0, -4);
+        if (!keepIds.has(String(rid))) {
+          await fs.rm(getRoutinePath(id, rid), { force: true });
+        }
+      }
+    } catch (_) {
+      // ignore
+    }
+  }
+
   await writeJson(path.join(projectDir, 'project.json'), next);
   return loadProject(id);
 };

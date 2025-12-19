@@ -6,6 +6,14 @@ export const varSet = (name, value) => {
   store.set(String(name ?? ''), value);
 };
 
+export const varDefine = (name, initialValue = 0) => {
+  const key = String(name ?? '');
+  if (!key) return;
+  if (!store.has(key)) store.set(key, initialValue);
+};
+
+export const varList = () => Array.from(store.keys()).sort((a, b) => a.localeCompare(b));
+
 export const varClearAll = () => {
   store.clear();
 };
