@@ -1137,6 +1137,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     cancelRef.current = {
       ...cancelState,
       cancel: async () => {
+        cancelRef.current.isCancelled = true;
         cancelState.isCancelled = true;
         try {
           await api.allStop?.();
@@ -1174,6 +1175,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
   }, [editorRoutine, api, ipc]);
 
   const stopRoutine = useCallback(async () => {
+    cancelRef.current.isCancelled = true;
     await cancelRef.current.cancel?.();
     setRunState('stopped');
     try {
@@ -1246,7 +1248,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
           Run
         </button>
         <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          Slow
+          Delay
           <select
             value={String(stepDelayMs)}
             onChange={(e) => setStepDelayMs(Number(e.target.value))}

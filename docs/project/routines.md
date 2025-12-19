@@ -50,7 +50,7 @@ Required controls:
 - **Back** (return to routine list)
 - **Run** (test routine)
 - **Stop**
-- **Slow** (debug stepping delay): 0ms / 100ms / 500ms / 1000ms
+- **Delay** (debug stepping delay): 0ms / 100ms / 500ms / 1000ms
 - **Save**
 - **Rename**
 - **Delete** (confirmation required)
@@ -67,7 +67,7 @@ Stop behavior:
 
 Debug behavior:
 - While running, the currently executing block is highlighted in the workspace.
-- The **Slow** setting adds an extra delay after each block (except `wait` / `wait until`).
+- The **Delay** setting adds an extra delay after each block (except `wait` / `wait until`).
 
 ### Left toolbox (block library)
 MVP categories (as implemented):
