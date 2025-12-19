@@ -20,5 +20,6 @@
 - Glossary (brick/module terms): `project/glossary.md`
 - Actions (pose sequences): `project/actions.md`
 - Routines (Blockly MVP): `project/routines.md`
+- Controller (control panel designer): `project/controller.md`
 - Model Config tab: `project/model-config.md`
 - Project controls: `project/project-controls.md`
