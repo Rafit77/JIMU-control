@@ -1089,6 +1089,14 @@ const defineBlocksOnce = (() => {
     };
     javascriptGenerator.forBlock.variables_get_dynamic = javascriptGenerator.forBlock.variables_get;
     javascriptGenerator.forBlock.variables_set_dynamic = javascriptGenerator.forBlock.variables_set;
+    // "Change variable by" block: must also route through api (global variables).
+    javascriptGenerator.forBlock.math_change = (block) => {
+      const field = block.getField('VAR');
+      const name = typeof field?.getText === 'function' ? field.getText() : String(block.getFieldValue('VAR') || '');
+      const delta = javascriptGenerator.valueToCode(block, 'DELTA', javascriptGenerator.ORDER_ADDITION) || '0';
+      const k = JSON.stringify(String(name || ''));
+      return `{\n  const __v = api.varGet(${k});\n  api.varSet(${k}, (Number(__v ?? 0) + Number(${delta})));\n}\n`;
+    };
     javascriptGenerator.forBlock.jimu_emergency_stop = () => 'await api.emergencyStop();\n';
     javascriptGenerator.forBlock.jimu_set_servo_timed = (block) => {
       const dur = javascriptGenerator.valueToCode(block, 'DUR', javascriptGenerator.ORDER_NONE) || '400';
