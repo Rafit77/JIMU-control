@@ -321,8 +321,12 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       const res = cached
         ? { ok: true, xml: cached }
         : await ipc.invoke('routine:loadXml', { projectId, routineId: routine.id });
-      setEditorRoutine({ id: routine.id, name: routine.name });
+      // Important: set XML before setting routine ID.
+      // Some React configs don't batch async setState; the workspace init effect
+      // depends on `editorRoutine.id`, so if we set that first it can initialize
+      // with stale/empty `editorXml` and never re-load.
       setEditorXml(String(res?.xml || ''));
+      setEditorRoutine({ id: routine.id, name: routine.name });
       setEditorDirty(false);
       setRunState('idle');
       setRunError(null);
@@ -337,14 +341,11 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     const xml = ws ? workspaceToXmlText(ws) : editorXml;
     routineXmlCacheRef.current.set(String(editorRoutine.id), String(xml || ''));
     setEditorXml(String(xml || ''));
+    await ipc.invoke('routine:saveXml', { projectId, routineId: editorRoutine.id, xml });
     setEditorDirty(false);
-    setRoutines((prev) =>
-      (Array.isArray(prev) ? prev : []).map((r) =>
-        String(r?.id) === String(editorRoutine.id) ? { ...(r || {}), updatedAt: new Date().toISOString() } : r,
-      ),
-    );
-    addLog?.(`Routine saved (RAM): ${editorRoutine.name}`);
-  }, [ipc, projectId, editorRoutine, editorXml, addLog]);
+    await refreshList();
+    addLog?.(`Routine saved: ${editorRoutine.name}`);
+  }, [ipc, projectId, editorRoutine, editorXml, refreshList, addLog]);
 
   const confirmLeaveEditor = useCallback(async () => {
     if (!editorRoutine) return true;
