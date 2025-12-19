@@ -1,6 +1,6 @@
 # Routines (Blockly MVP)
 
-This document defines the **Milestone 3** behavior for the **Routines** tab, the Blockly editor, and the current block set.
+This document defines the Milestone 3 behavior for the **Routines** tab, the Blockly editor, and the current block set.
 
 ## Concepts
 - A **Routine** is a named program created with blocks (Blockly).
@@ -12,7 +12,7 @@ This document defines the **Milestone 3** behavior for the **Routines** tab, the
 
 ## Storage (project format)
 - Store each routine workspace in `routines/<routineId>.xml`.
-- `project.json` stores a list of routines (id + name + timestamps). The XML is the source of truth for blocks.
+- `project.json` stores a list of routines (id + name + timestamps).
 
 Notes:
 - Do not use the routine name as the filename (rename should not rename files).
@@ -28,12 +28,11 @@ Required behavior:
 - **Save (in routine editor)** updates the routine definition in **RAM only** (no disk write).
 - If you leave the editor without saving (Back → Discard), **RAM is unchanged**.
 - **Project → Save** persists the entire RAM project state to disk:
-  - writes `project.json` (including `variables`)
-  - writes routine XML files for routines saved in RAM (the routine XML cache)
+  - writes `project.json` (including `variables` and `routines`)
+  - writes routine XML files for routines stored in the RAM cache
+  - removes routine XML files that are no longer referenced by `project.json.routines`
 
 ## Routines tab (panel UX)
-The Routines tab is a list of routines with basic management actions.
-
 Required UI:
 - Routine list: one row per routine, showing `name` and optional summary (updated time).
 - **Create routine**: create an empty routine and open it in the editor.
@@ -64,6 +63,7 @@ Stop behavior:
 - Pressing **Stop** cancels execution and runs a best-effort safety stop:
   - stop motors/servos (release holds)
   - turn off Eye LEDs and Ultrasonic LEDs (for modules listed in the project snapshot)
+- If the brick is not connected while stopping, cleanup commands may fail with “Not connected” (expected).
 
 Debug behavior:
 - While running, the currently executing block is highlighted in the workspace.
@@ -89,27 +89,33 @@ Notes:
 - `if / if-else` (`controls_if`): branch based on a boolean condition.
 - `repeat N` (`controls_repeat_ext`): run nested statements N times.
 - `while / until` (`controls_whileUntil`): loop while/until a boolean condition is met.
+- `break / continue` (`controls_flow_statements`): break out of or continue the innermost loop.
 - `wait [ms]` (`jimu_wait`): delay for a duration; cancellable via Stop.
 - `wait until <condition>` (`jimu_wait_until`): polls until condition becomes true (50ms polling); cancellable via Stop.
 
 ### Math
 - `number` (`math_number`): numeric constant.
-- `arithmetic` (`math_arithmetic`): arithmetic operations (+, -, ×, ÷, power).
+- `true / false` (`logic_boolean`): boolean constant.
+- `arithmetic` (`math_arithmetic`): +, -, ×, ÷, power.
+- `math function` (`math_single`): unary functions (negate, abs, sqrt, ln, log10, exp, etc.).
+- `trigonometry` (`math_trig`): sin/cos/tan + inverses.
+- `rounding` (`math_round`): round / round up / round down.
 - `random integer from [a] to [b]` (`math_random_int`): inclusive random int.
 - `constrain [value] low [low] high [high]` (`math_constrain`): clamp a number into range.
-- `compare` (`logic_compare`): compare two values; returns boolean (<, ≤, =, ≠, ≥, >).
+- `compare` (`logic_compare`): compare two values; returns boolean (<, ≤, =, ≥, ≠, >).
 - `and / or` (`logic_operation`): boolean algebra.
 - `not` (`logic_negate`): boolean negation.
 
 ### Variables
-- Create variables from the Variables category (Blockly built-in).
+- Create variables from the **Variables** dialog (top bar button).
 - `set [variable] to [value]`: assign variable.
 - `get [variable]`: read variable value.
+- `change [variable] by [value]`: add delta to the variable.
 
 Global variables (important):
 - Variables are **global per project** and shared between routines in real time (used for inter-routine communication).
 - Variables are keyed by **variable name** (not Blockly internal IDs), so using the same name in two routines refers to the same global value.
-- Current implementation stores values in RAM (future: load initial values from `project.json` variables).
+- Initial values are loaded from `project.json.variables` on Project Open; runtime values live in RAM; Project Save persists the current RAM values back to `project.json.variables`.
 
 Variables dialog rules:
 - Shows current value as `= <value>` on the right side.
@@ -117,69 +123,52 @@ Variables dialog rules:
 - Delete is blocked if the variable name is used by another routine.
 
 ### Sensors
-- `read IR [id]` (`jimu_read_ir`) returns a number
-  - Returns the raw IR reading from the brick.
-- `read Ultrasonic [id] (cm)` (`jimu_read_us`) returns a number
-  - Returns distance in cm.
+- `read IR [id]` (`jimu_read_ir`) returns a number.
+- `read Ultrasonic [id] (cm)` (`jimu_read_us`) returns a number.
   - Convention: if the device raw value is `0` (out of range), this returns `301.0`.
-- `read servo [id] (deg)` (`jimu_read_servo`) returns a number
-  - Reads current servo position in degrees.
-  - Respects calibration `reverse` (returns inverted degrees if enabled).
-- `battery level (%)` (`jimu_battery_percent`) returns a number
+- `read servo [id] (deg)` (`jimu_read_servo`) returns a number.
+- `battery level (%)` (`jimu_battery_percent`) returns a number.
   - Returns `0..100` using the same voltage calibration as the UI battery icon.
-- `battery charging?` (`jimu_battery_charging`) returns a boolean
-  - True if the brick reports it is charging.
-- `get slider [name]` (`jimu_get_slider`) returns a number
-- `get joystick [name] [x|y]` (`jimu_get_joystick`) returns a number
-- `get switch [name]` (`jimu_get_switch`) returns a boolean
-  - These are planned application inputs (Controller widgets).
-  - Current implementation returns `0` / `false` (placeholder).
+- `battery charging?` (`jimu_battery_charging`) returns a boolean.
+- `get slider [name]` (`jimu_get_slider`) returns a number (placeholder until Controller widgets exist).
+- `get joystick [name] [x|y]` (`jimu_get_joystick`) returns a number (placeholder until Controller widgets exist).
+- `get switch [name]` (`jimu_get_switch`) returns a boolean (placeholder until Controller widgets exist).
 
 ### Movement
 - `set servo position` (`jimu_set_servo_timed`)
   - Mutator block: add/remove servo rows; each row selects a servo ID and provides its target degrees.
-  - Sends one `0x09` “Servo positions” command for all selected servos (clamped by calibration min/max + reverse), then waits `[duration ms]`.
-  - Duration mapping: device `speed` byte uses `speed/20 = seconds` so `speed ~= durationMs/50` (rounded, clamped to `0..255`).
-- `rotate servo [id] [cw/ccw] speed [x]` (`jimu_rotate_servo`)
+  - Sends one multi-servo position command, then waits `[duration ms]`.
+- `rotate servo` (`jimu_rotate_servo`)
   - Mutator block: add/remove servo ID rows (IDs must be distinct).
-  - For continuous rotation (servo motor/mixed mode). Direction + speed are shared.
-  - Speed is clamped using the most restrictive calibration `maxSpeed` in each direction group.
-  - If some servos have `reverse=true`, the implementation splits the command into CW and CCW groups.
-- `stop servo [id]` (`jimu_stop_servo`)
+  - Speed is shared, clamped to configured limits; negative speed reverses direction internally.
+- `stop servo` (`jimu_stop_servo`)
   - Mutator block: add/remove servo ID rows (IDs must be distinct).
-  - Best-effort stop for continuous rotation. Also triggers a best-effort release via `readServo(0)` (read all).
-- `rotate motor [id] [cw/ccw] speed [x] duration [ms]` (`jimu_rotate_motor`)
-- `rotate motor , duration` (`jimu_rotate_motor`)
-  - Mutator block: add/remove motor rows (IDs must be distinct).
-  - Each row provides its own speed; negative speed reverses direction (motor protocol uses signed speed).
-  - Duration is shared for all selected motors and clamped to `0..6000ms`.
-  - Each motor speed is clamped to its configured `motorConfig[id].maxSpeed` and respects `reverse` (sign flips).
-- `stop motor [id]` (`jimu_stop_motor`)
+- `rotate motor, duration` (`jimu_rotate_motor`)
+  - Mutator block: add/remove motor rows; each motor has its own speed; duration is shared.
+- `stop motor` (`jimu_stop_motor`)
   - Mutator block: add/remove motor ID rows (IDs must be distinct).
-  - Best-effort motor stop.
-- `select action [name]` (`jimu_select_action`): placeholder for later Action playback integration.
+- `select action [name]` (`jimu_select_action`): placeholder for later Action integration.
 - `emergency stop` (`jimu_emergency_stop`): immediate stop + cancels the routine run.
 
 ### Show
-- `eye LED eyes [x] color [color]` (`jimu_eye_color`)
-- `eye LED eyes [x] color [color] duration [ms]` (`jimu_eye_color_duration`)
-- `eye LED eyes [x] color [color] scene [1..15] repeat [n] wait [bool]` (`jimu_eye_scene`)
-- `eye LED eyes [x] custom <8 segment colors>` (`jimu_eye_custom`)
-- `eye LED eyes [x] custom <8 segment colors> duration [ms]` (`jimu_eye_custom_duration`)
-- `eye LED eyes [x] off` (`jimu_eye_off`)
-- `ultrasonic LED [id] color [color]` (`jimu_us_led_color`)
-- `ultrasonic LED [id] off` (`jimu_us_led_off`)
-- `indicator [name] color [color]` (`jimu_indicator_color`) placeholder (Controller widgets not implemented yet)
-- `display [name] show [value]` (`jimu_display_show`) placeholder (Controller widgets not implemented yet)
-
-Notes:
-- `eyes [x]` is a multi-select checkbox list populated from the project `hardware.modules.eyes` (project snapshot, not live detection).
-- The `custom <8 segment colors>` block shows 8 color pickers in a compass-like layout (no labels). Layout is:
-  - top row: NW, N, NE
-  - middle row: W, E
-  - bottom row: SW, S, SE
+- Eye LED blocks:
+  - `eye LED eyes [x] color [color]` (`jimu_eye_color`)
+  - `eye LED eyes [x] color [color] duration [ms]` (`jimu_eye_color_duration`)
+  - `eye LED eyes [x] color [color] scene [1..15] repeat [n] wait [bool]` (`jimu_eye_scene`)
+  - `eye LED eyes [x] custom <8 segment colors>` (`jimu_eye_custom`)
+  - `eye LED eyes [x] custom <8 segment colors> duration [ms]` (`jimu_eye_custom_duration`)
+  - `eye LED eyes [x] off` (`jimu_eye_off`)
+- Ultrasonic LED blocks:
+  - `ultrasonic LED [id] color [color]` (`jimu_us_led_color`)
+  - `ultrasonic LED [id] off` (`jimu_us_led_off`)
+- Controller placeholders (until Controller widgets exist):
+  - `indicator [name] color [color]` (`jimu_indicator_color`)
+  - `display [name] show [value]` (`jimu_display_show`)
 
 ### Debug
+- `Print [value]` (`jimu_print`)
+  - Shows the current value on the block itself while running.
+  - This is a runtime-only UI update and does not mark the routine as “unsaved”.
 - `log [value]` (`jimu_log`)
   - Writes to the routine Trace panel and also to the global Logs tab.
   - Accepts any value type.

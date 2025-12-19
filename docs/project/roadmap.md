@@ -16,16 +16,16 @@ Status: complete (2025-12-17)
 ## Milestone 3 — “Blockly MVP”
 Status: implemented (2025-12-18)
 - Blockly workspace embedded in app (Routines tab)
-- Block set MVP: connect, wait, variables, if/loop, servo position, motor rotate, sensor read
+- Block set MVP: control flow + math + variables + sensors + movement + show + debug
 - Run/Stop controls and trace output
 - Specification: `docs/project/routines.md`
 
-## Milestone 4 — “Movement”
-- Movement workspace in app
-
-## Milestone 5 — “Controller”
+## Milestone 4 — “Controller”
 - Widgets (button/slider/joystick) + bindings
 - Keyboard/gamepad triggers routed to actions
+
+## Milestone 5 — “Actions”
+- Actions workspace in app
 
 ## Milestone 6 — “Distribution”
 - Windows installer + auto-update strategy
