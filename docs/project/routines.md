@@ -118,14 +118,18 @@ Notes:
   - For continuous rotation (servo motor/mixed mode). Direction + speed are shared.
   - Speed is clamped using the most restrictive calibration `maxSpeed` in each direction group.
   - If some servos have `reverse=true`, the implementation splits the command into CW and CCW groups.
-- `stop servo [id]` (`jimu_stop_servo`): best-effort stop for continuous rotation.
+- `stop servo [id]` (`jimu_stop_servo`)
+  - Mutator block: add/remove servo ID rows (IDs must be distinct).
+  - Best-effort stop for continuous rotation. Also triggers a best-effort release via `readServo(0)` (read all).
 - `rotate motor [id] [cw/ccw] speed [x] duration [ms]` (`jimu_rotate_motor`)
 - `rotate motor , duration` (`jimu_rotate_motor`)
   - Mutator block: add/remove motor rows (IDs must be distinct).
   - Each row provides its own speed; negative speed reverses direction (motor protocol uses signed speed).
   - Duration is shared for all selected motors and clamped to `0..6000ms`.
   - Each motor speed is clamped to its configured `motorConfig[id].maxSpeed` and respects `reverse` (sign flips).
-- `stop motor [id]` (`jimu_stop_motor`): best-effort motor stop.
+- `stop motor [id]` (`jimu_stop_motor`)
+  - Mutator block: add/remove motor ID rows (IDs must be distinct).
+  - Best-effort motor stop.
 - `select action [name]` (`jimu_select_action`): placeholder for later Action playback integration.
 - `emergency stop` (`jimu_emergency_stop`): immediate stop + cancels the routine run.
 

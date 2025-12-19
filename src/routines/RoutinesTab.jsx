@@ -526,6 +526,22 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       }
     };
 
+    const stopServosMulti = async (ids) => {
+      if (!ipc) throw new Error('IPC unavailable');
+      if (isCancelled()) return;
+      const list = Array.isArray(ids) ? ids.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0) : [];
+      const unique = Array.from(new Set(list));
+      if (!unique.length) return;
+      // Speed=0 stop (direction is irrelevant), grouped like rotateServoMulti (respects reverse splitting).
+      await rotateServoMulti(unique, 'cw', 0);
+      // Best-effort release (reading position releases hold; id=0 reads all servos).
+      try {
+        await ipc.invoke('jimu:readServo', 0);
+      } catch (_) {
+        // ignore
+      }
+    };
+
     const rotateMotor = async (id, dir, speed, durationMs) => {
       if (!ipc) throw new Error('IPC unavailable');
       if (isCancelled()) return;
@@ -576,6 +592,21 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       if (!ipc) throw new Error('IPC unavailable');
       if (isCancelled()) return;
       await ipc.invoke('jimu:stopMotor', Number(id ?? 0));
+    };
+
+    const stopMotorsMulti = async (ids) => {
+      if (!ipc) throw new Error('IPC unavailable');
+      if (isCancelled()) return;
+      const list = Array.isArray(ids) ? ids.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0) : [];
+      const unique = Array.from(new Set(list)).sort((a, b) => a - b);
+      for (const id of unique) {
+        if (isCancelled()) return;
+        try {
+          await ipc.invoke('jimu:stopMotor', id);
+        } catch (_) {
+          // ignore best effort
+        }
+      }
     };
 
     const readIR = async (id) => {
@@ -801,9 +832,11 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       rotateServo,
       rotateServoMulti,
       stopServo,
+      stopServosMulti,
       rotateMotor,
       rotateMotorsTimed,
       stopMotor,
+      stopMotorsMulti,
       readIR,
       readUltrasonicCm,
       readServoDeg,
