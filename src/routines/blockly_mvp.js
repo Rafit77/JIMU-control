@@ -1250,6 +1250,7 @@ export const getBlocklyToolbox = () => {
         categorystyle: 'math_category',
         contents: [
           { kind: 'block', type: 'math_number' },
+          { kind: 'block', type: 'logic_boolean' },
           { kind: 'block', type: 'math_arithmetic' },
           {
             kind: 'block',
