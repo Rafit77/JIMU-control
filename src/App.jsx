@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import * as Slider from '@radix-ui/react-slider';
 import RoutinesTab from './routines/RoutinesTab.jsx';
 import { batteryPercentFromVolts } from './battery.js';
+import * as globalVars from './routines/global_vars.js';
 
 const Section = ({ title, children, style }) => (
   <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 12, marginBottom: 12, ...(style || {}) }}>
@@ -295,6 +296,14 @@ export default function App() {
     }
   }, [ipc, addLog]);
 
+  useEffect(() => {
+    try {
+      globalVars.varImport(currentProject?.data?.variables || {});
+    } catch (_) {
+      // ignore
+    }
+  }, [currentProject?.id]);
+
   const saveCurrentProject = useCallback(async () => {
     if (!ipc || !currentProject?.id) return;
     try {
@@ -304,6 +313,13 @@ export default function App() {
     }
     const dataToSave = {
       ...(currentProject.data || {}),
+      variables: (() => {
+        try {
+          return globalVars.varExport();
+        } catch (_) {
+          return currentProject.data?.variables || {};
+        }
+      })(),
       hardware: {
         ...(currentProject.data?.hardware || {}),
         modules: modules || currentProject.data?.hardware?.modules || null,

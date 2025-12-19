@@ -1407,8 +1407,9 @@ export const createWorkspace = (el, { initialXmlText } = {}) => {
     try {
       const dom = Blockly.Xml.textToDom(initialXmlText);
       Blockly.Xml.domToWorkspace(dom, workspace);
-    } catch (_) {
-      // ignore invalid xml
+    } catch (e) {
+      console.error('Failed to load routine XML into Blockly workspace.', e);
+      throw new Error(`Failed to load routine XML: ${e?.message || String(e)}`);
     }
   }
 

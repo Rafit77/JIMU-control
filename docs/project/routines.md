@@ -18,6 +18,19 @@ Notes:
 - Do not use the routine name as the filename (rename should not rename files).
 - Keep routine IDs stable so other features (controller bindings, triggers, etc.) can reference routines later.
 
+## Runtime load/save model (RAM vs disk)
+When a project is open, the app keeps a **RAM project state**. Disk (`jimu_saves/<projectId>/...`) is only persistence.
+
+Required behavior:
+- **Project Open** loads `project.json` into RAM (including calibration, routines list, and `variables`).
+- The Routines tab preloads each routine XML into a RAM cache (best-effort).
+- **Open routine** initializes Blockly from the **RAM routine definition**.
+- **Save (in routine editor)** updates the routine definition in **RAM only** (no disk write).
+- If you leave the editor without saving (Back → Discard), **RAM is unchanged**.
+- **Project → Save** persists the entire RAM project state to disk:
+  - writes `project.json` (including `variables`)
+  - writes routine XML files for routines saved in RAM (the routine XML cache)
+
 ## Routines tab (panel UX)
 The Routines tab is a list of routines with basic management actions.
 

@@ -230,11 +230,28 @@ const RoutinesTab = forwardRef(function RoutinesTab(
   const hostRef = useRef(null);
   const cancelRef = useRef({ cancel: () => {} });
   const routineXmlCacheRef = useRef(new Map()); // routineId -> xml (RAM-only until project save)
+  const editorInitialXmlRef = useRef(''); // xml used for workspace initialization (avoids async setState ordering issues)
 
   const refreshList = useCallback(async () => {
     if (!ipc || !projectId) return;
     const list = await ipc.invoke('routine:list', { projectId });
-    setRoutines(Array.isArray(list) ? list : []);
+    const safeList = Array.isArray(list) ? list : [];
+    setRoutines(safeList);
+    // Preload routine XML into RAM cache so opening a routine uses RAM definition (not disk).
+    // Best-effort: ignore load failures.
+    Promise.all(
+      safeList.map(async (r) => {
+        if (!r?.id) return;
+        const id = String(r.id);
+        if (routineXmlCacheRef.current.has(id)) return;
+        try {
+          const res = await ipc.invoke('routine:loadXml', { projectId, routineId: id });
+          routineXmlCacheRef.current.set(id, String(res?.xml || ''));
+        } catch (_) {
+          // ignore
+        }
+      }),
+    ).catch(() => {});
   }, [ipc, projectId]);
 
   useEffect(() => {
@@ -325,7 +342,9 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       // Some React configs don't batch async setState; the workspace init effect
       // depends on `editorRoutine.id`, so if we set that first it can initialize
       // with stale/empty `editorXml` and never re-load.
-      setEditorXml(String(res?.xml || ''));
+      const xmlText = String(res?.xml || '');
+      editorInitialXmlRef.current = xmlText;
+      setEditorXml(xmlText);
       setEditorRoutine({ id: routine.id, name: routine.name });
       setEditorDirty(false);
       setRunState('idle');
@@ -341,11 +360,14 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     const xml = ws ? workspaceToXmlText(ws) : editorXml;
     routineXmlCacheRef.current.set(String(editorRoutine.id), String(xml || ''));
     setEditorXml(String(xml || ''));
-    await ipc.invoke('routine:saveXml', { projectId, routineId: editorRoutine.id, xml });
     setEditorDirty(false);
-    await refreshList();
-    addLog?.(`Routine saved: ${editorRoutine.name}`);
-  }, [ipc, projectId, editorRoutine, editorXml, refreshList, addLog]);
+    setRoutines((prev) =>
+      (Array.isArray(prev) ? prev : []).map((r) =>
+        String(r?.id) === String(editorRoutine.id) ? { ...(r || {}), updatedAt: new Date().toISOString() } : r,
+      ),
+    );
+    addLog?.(`Routine saved (RAM): ${editorRoutine.name}`);
+  }, [ipc, projectId, editorRoutine, editorXml, addLog]);
 
   const confirmLeaveEditor = useCallback(async () => {
     if (!editorRoutine) return true;
@@ -398,7 +420,8 @@ const RoutinesTab = forwardRef(function RoutinesTab(
 
     let ws = null;
     try {
-      ws = createWorkspace(div, { initialXmlText: editorXml });
+      const initXml = editorInitialXmlRef.current || editorXml;
+      ws = createWorkspace(div, { initialXmlText: initXml });
       workspaceRef.current = ws;
       ws.__jimuOpenVarsDialog = () => setVarsOpen(true);
       setWorkspaceReady(true);
@@ -434,6 +457,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
         // ignore
       }
       workspaceRef.current = null;
+      editorInitialXmlRef.current = '';
     };
   }, [editorRoutine?.id]); // re-create workspace when switching routine
 

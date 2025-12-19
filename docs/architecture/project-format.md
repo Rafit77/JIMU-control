@@ -101,7 +101,7 @@ TBD.
 ## Variables (shared runtime state)
 Variables are **global per project** and shared between routines in real time (so two concurrently running routines can communicate).
 
-- Store initial values/types in `project.json` (schema TBD, e.g. `variables: { "speed": 0, "enabled": true }`).
-- Runtime values live in memory while the app is running and are keyed by **variable name**.
+- Store variable values in `project.json` under `variables` (keyed by variable name), e.g. `variables: { "speed": 0, "enabled": true }`.
+- Runtime values live in memory while the app is running and are keyed by **variable name**; Project Save persists the current RAM values to disk.
 - Rename should be avoided/disabled because other routines may depend on the variable name.
 - Deleting a variable should be blocked if it is referenced by any routine other than the current one.

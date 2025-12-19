@@ -10,3 +10,10 @@ export const varClearAll = () => {
   store.clear();
 };
 
+export const varExport = () => Object.fromEntries(store.entries());
+
+export const varImport = (obj) => {
+  store.clear();
+  if (!obj || typeof obj !== 'object') return;
+  for (const [k, v] of Object.entries(obj)) store.set(String(k ?? ''), v);
+};
