@@ -8,6 +8,30 @@ This document specifies Milestone 4: a **Controller** tab that lets the user des
 - Allow multiple routines to run **in parallel** (background execution).
 - Allow routines to read controller widget state via `getSlider(name)`, `getJoystick(name, axis)`, `getSwitch(name)`.
 
+## MVP widget set (well-defined elements)
+We intentionally limit the widget library to a small, well-defined set:
+- **Joystick**: 2-axis (x/y) joystick.
+- **Slider**: horizontal and vertical.
+- **Button**
+- **Switch**
+- **LED indicator**: small round/square color blob (display-only).
+- **Display**: number/text presenter (display-only).
+
+Cross-platform requirement:
+- Must work in Electron (Windows/macOS) and in a browser on mobile (Android/iOS).
+
+## Library selection (recommended)
+Use:
+- **react-grid-layout** (MIT) for the grid designer (Design/Run mode toggle).
+- **nipplejs** (MIT) for the joystick widget (touch + mouse).
+
+Everything else can be implemented with simple components:
+- Button: `<button>`
+- Switch: checkbox-style input or Radix Switch
+- Slider: Radix Slider (already used in the app)
+- LED: `<div>` with background color + border radius
+- Display: `<div>` text/number
+
 ## Recommended open source libraries
 
 ### Grid / layout (React)
@@ -16,6 +40,7 @@ Primary recommendation:
   - Very common for dashboard-like UIs.
   - Supports drag + resize, responsive layouts, grid snapping.
   - Natural fit for “Design/Run” mode (toggle `isDraggable` / `isResizable`).
+  - Compatible with Electron (Windows/macOS) and browsers (Android/iOS).
 
 Alternatives:
 - **Gridstack.js** (MIT) (with a React wrapper or manual integration)
@@ -46,7 +71,7 @@ Alternatives:
 ### Run mode
 - Layout is locked (no move/resize).
 - Widgets are interactive and publish their live state to a **Controller State Store**.
-- Widget events can start/stop routines via bindings (button press, switch toggle, etc.).
+- Widget events can start routines via bindings.
 
 ## Controller State Store (shared RAM)
 Controller widgets should publish their state to an in-memory store (similar to global variables):
@@ -69,7 +94,7 @@ Important:
 Yes, routines can (and should) run without the Blockly visual workspace.
 
 Recommended architecture:
-- Blockly XML (`routines/<id>.xml`) is the **editor source of truth** for editing.
+- Blockly XML (`routines/<id>.xml`) is the editor source of truth for editing.
 - On **Project → Save**, generate and persist a compiled JS form per routine (e.g. `routines/<id>.js`) OR store compiled JS in `project.json`.
 - The Controller tab runs routines using the compiled JS and the same `api` surface (JIMU commands, variables, controller inputs).
 
@@ -86,7 +111,7 @@ Debugging note:
 - Background execution can run with `debug=false` (no highlight) and still log to trace.
 
 ## Bindings / triggers (MVP proposal)
-Bindings live on widgets and define which routine(s) to run.
+Bindings live on widgets and define which routine to run.
 
 General rules:
 - Any event binding can be left **unconnected** (no routine selected).
@@ -127,7 +152,11 @@ Each widget:
 - bindings: list of triggers → routine ids
 
 ## Open questions
-- Grid resolution: fixed (e.g. 12 columns) vs user configurable?
+- Grid resolution:
+  - fixed (will check and test it)
 - Naming rules for widgets (must be unique per project)?
+  - yes
 - Background routine concurrency limits (how many routines at once)?
+  - no more than 1 instance of every configured routine
 - Should controller widget states be persisted between runs or reset on connect?
+  - reset on connect
