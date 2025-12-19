@@ -14,18 +14,24 @@ Status: complete (2025-12-17)
 - Model Config saved calibration and live status colors (new/detected/missing)
 
 ## Milestone 3 — “Blockly MVP”
-Status: implemented (2025-12-18)
+Status: complete (2025-12-19)
 - Blockly workspace embedded in app (Routines tab)
 - Block set MVP: control flow + math + variables + sensors + movement + show + debug
 - Run/Stop controls and trace output
 - Specification: `docs/project/routines.md`
 
 ## Milestone 4 — “Controller”
-- Widgets (button/slider/joystick) + bindings
-- Keyboard/gamepad triggers routed to actions
+- Create visual controler designer (buttons, slider, joystick, indicator(led), display(number))
+- routine backgroud execution (paralel)
+- Widgets (button/slider/joystick) + triggers for routines
+- Keyboard/gamepad events triggers for routines
+- timers (repeated events like every 100ms) as triggers for routines
 
 ## Milestone 5 — “Actions”
 - Actions workspace in app
+- record / play / edit Action
+- allow routines to call Actions,
+- allow Action instead of routine in triggers (in controler)
 
 ## Milestone 6 — “Distribution”
 - Windows installer + auto-update strategy
