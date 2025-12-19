@@ -88,19 +88,31 @@ Debugging note:
 ## Bindings / triggers (MVP proposal)
 Bindings live on widgets and define which routine(s) to run.
 
+General rules:
+- Any event binding can be left **unconnected** (no routine selected).
+- Events only need a selected routine to start; the routine may run indefinitely or may end after it completes.
+- If a routine is already running, do **not** start it again (no re-entrancy).
+- Add a global re-trigger cooldown (a constant, easy to change in code) to limit how fast a routine can be started again.
+
 Suggested MVP bindings:
 - Button:
-  - onPress → start routine
-  - onRelease → stop routine
+  - optional keyboard shortcut
+  - optional gamepad button shortcut
+  - onPress → start selected routine
+  - onRelease → start selected routine
 - Switch:
-  - onOn → start routine
-  - onOff → stop routine
+  - publish live value
+  - onOn → start selected routine
+  - onOff → start selected routine
 - Slider:
-  - publish live value; optional threshold trigger later
+  - publish live value
+  - on value change → start selected routine
 - Joystick:
+  - optional physical gamepad joystick mapping (note: multiple sticks/axes per gamepad)
   - publish live x/y; optional deadzone + rate limit
+  - on value change → start selected routine
 - Timer trigger:
-  - every N ms → start routine (or call a “tick” routine)
+  - every N ms → start selected routine
 - Keyboard/gamepad:
   - map a key/button/axis to a widget or directly to a routine trigger
 
