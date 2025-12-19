@@ -379,6 +379,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     try {
       ws = createWorkspace(div, { initialXmlText: editorXml });
       workspaceRef.current = ws;
+      ws.__jimuOpenVarsDialog = () => setVarsOpen(true);
       setWorkspaceReady(true);
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {

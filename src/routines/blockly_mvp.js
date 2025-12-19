@@ -34,6 +34,25 @@ const defineBlocksOnce = (() => {
 
     Blockly.setLocale(en);
 
+    // In Electron (hardened), window.prompt() is unavailable. Blockly's default
+    // "Create variable" flyout button uses prompt; we route it to the app's
+    // Variables dialog instead (workspace.__jimuOpenVarsDialog).
+    if (Blockly?.Variables?.createVariableButtonHandler && !Blockly.Variables.__jimuPatchedCreateVariableButtonHandler) {
+      const orig = Blockly.Variables.createVariableButtonHandler;
+      Blockly.Variables.createVariableButtonHandler = (workspace, ...rest) => {
+        try {
+          if (workspace?.__jimuOpenVarsDialog) {
+            workspace.__jimuOpenVarsDialog();
+            return;
+          }
+        } catch (_) {
+          // ignore
+        }
+        return orig(workspace, ...rest);
+      };
+      Blockly.Variables.__jimuPatchedCreateVariableButtonHandler = true;
+    }
+
     // Ensure Variables "set" blocks have a default value shadow (=0).
     const patchDefaultValueShadow = (type) => {
       const def = Blockly?.Blocks?.[type];
