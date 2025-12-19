@@ -71,10 +71,28 @@ const RoutineNameDialog = ({ open, title, initialName, onCancel, onSubmit }) => 
 
 const VariablesDialog = ({ open, workspace, getVarValue, onClose }) => {
   const [newName, setNewName] = useState('');
+  const [varsVersion, bumpVarsVersion] = useState(0);
+
+  useEffect(() => {
+    if (!open || !workspace) return;
+    const onWsChange = (e) => {
+      const t = e?.type;
+      if (
+        t === Blockly.Events.VAR_CREATE ||
+        t === Blockly.Events.VAR_DELETE ||
+        t === Blockly.Events.VAR_RENAME
+      ) {
+        bumpVarsVersion((v) => v + 1);
+      }
+    };
+    workspace.addChangeListener(onWsChange);
+    return () => workspace.removeChangeListener(onWsChange);
+  }, [open, workspace]);
+
   const vars = useMemo(() => {
     if (!workspace) return [];
     return workspace.getAllVariables().map((v) => ({ id: v.getId(), name: v.name, type: v.type }));
-  }, [workspace, open]);
+  }, [workspace, open, varsVersion]);
 
   if (!open) return null;
 
@@ -144,8 +162,8 @@ const VariablesDialog = ({ open, workspace, getVarValue, onClose }) => {
                   value={v.name}
                   onChange={(e) => {
                     if (!workspace) return;
-                    const next = String(e.target.value || '').trim();
-                    if (!next) return;
+                    const next = String(e.target.value ?? '');
+                    if (!next.trim()) return;
                     try {
                       workspace.renameVariableById(v.id, next);
                     } catch (_) {
