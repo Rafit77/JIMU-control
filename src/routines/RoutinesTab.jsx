@@ -1107,7 +1107,13 @@ const RoutinesTab = forwardRef(function RoutinesTab(
           const ws = workspaceRef.current;
           const b = ws?.getBlockById?.(String(blockId || ''));
           if (!b) return;
-          b.setFieldValue(String(value ?? ''), 'OUT');
+          // Runtime-only UI update (must NOT mark the routine as "unsaved").
+          Blockly.Events.disable();
+          try {
+            b.setFieldValue(String(value ?? ''), 'OUT');
+          } finally {
+            Blockly.Events.enable();
+          }
         } catch (_) {
           // ignore
         }

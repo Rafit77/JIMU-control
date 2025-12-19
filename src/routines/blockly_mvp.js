@@ -1308,6 +1308,7 @@ export const getBlocklyToolbox = () => {
             inputs: { TIMES: { shadow: { type: 'math_number', fields: { NUM: 10 } } } },
           },
           { kind: 'block', type: 'controls_whileUntil', inputs: { BOOL: { shadow: { type: 'logic_boolean', fields: { BOOL: 'FALSE' } } } } },
+          { kind: 'block', type: 'controls_flow_statements' },
           { kind: 'block', type: 'jimu_wait', inputs: { MS: { shadow: { type: 'math_number', fields: { NUM: 500 } } } } },
           {
             kind: 'block',
@@ -1324,6 +1325,9 @@ export const getBlocklyToolbox = () => {
           { kind: 'block', type: 'math_number' },
           { kind: 'block', type: 'logic_boolean' },
           { kind: 'block', type: 'math_arithmetic' },
+          { kind: 'block', type: 'math_single' },
+          { kind: 'block', type: 'math_trig' },
+          { kind: 'block', type: 'math_round' },
           {
             kind: 'block',
             type: 'math_random_int',
