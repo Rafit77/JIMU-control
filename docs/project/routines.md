@@ -37,6 +37,7 @@ Required controls:
 - **Back** (return to routine list)
 - **Run** (test routine)
 - **Stop**
+- **Slow** (debug stepping delay): 0ms / 100ms / 500ms / 1000ms
 - **Save**
 - **Rename**
 - **Delete** (confirmation required)
@@ -50,6 +51,10 @@ Stop behavior:
 - Pressing **Stop** cancels execution and runs a best-effort safety stop:
   - stop motors/servos (release holds)
   - turn off Eye LEDs and Ultrasonic LEDs (for modules listed in the project snapshot)
+
+Debug behavior:
+- While running, the currently executing block is highlighted in the workspace.
+- The **Slow** setting adds an extra delay after each block (except `wait` / `wait until`).
 
 ### Left toolbox (block library)
 MVP categories (as implemented):

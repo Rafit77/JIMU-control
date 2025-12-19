@@ -1370,8 +1370,19 @@ export const workspaceToXmlText = (workspace) => {
   return `${Blockly.Xml.domToText(dom)}\n`;
 };
 
-export const workspaceToAsyncJs = (workspace) => {
+export const workspaceToAsyncJs = (workspace, { debug = false } = {}) => {
   defineBlocksOnce();
-  const code = javascriptGenerator.workspaceToCode(workspace);
-  return `"use strict";\nreturn (async () => {\n${code}\n})();\n`;
+  const prevPrefix = javascriptGenerator.STATEMENT_PREFIX;
+  const prevSuffix = javascriptGenerator.STATEMENT_SUFFIX;
+  try {
+    if (debug) {
+      javascriptGenerator.STATEMENT_PREFIX = 'await api.__step(%1);\n';
+      javascriptGenerator.STATEMENT_SUFFIX = null;
+    }
+    const code = javascriptGenerator.workspaceToCode(workspace);
+    return `"use strict";\nreturn (async () => {\n${code}\n})();\n`;
+  } finally {
+    javascriptGenerator.STATEMENT_PREFIX = prevPrefix;
+    javascriptGenerator.STATEMENT_SUFFIX = prevSuffix;
+  }
 };

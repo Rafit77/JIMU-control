@@ -176,6 +176,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
   const [runState, setRunState] = useState('idle'); // idle|running|stopped|error
   const [runError, setRunError] = useState(null);
   const [trace, setTrace] = useState([]);
+  const [stepDelayMs, setStepDelayMs] = useState(0);
   const [workspaceError, setWorkspaceError] = useState(null);
   const [workspaceReady, setWorkspaceReady] = useState(false);
   const [nameDialog, setNameDialog] = useState({ open: false, mode: 'create', routineId: null, initialName: '' });
@@ -825,6 +826,21 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     const batteryCharging = () => Boolean(battery?.charging);
 
     return {
+      __step: async (blockId) => {
+        const ws = workspaceRef.current;
+        try {
+          ws?.highlightBlock?.(blockId || null);
+        } catch (_) {
+          // ignore
+        }
+        if (isCancelled()) throw new Error('Cancelled');
+        const extra = clamp(Number(stepDelayMs ?? 0), 0, 60_000);
+        if (extra <= 0) return;
+        const b = ws?.getBlockById ? ws.getBlockById(blockId) : null;
+        const t = String(b?.type || '');
+        if (t === 'jimu_wait' || t === 'jimu_wait_until') return;
+        await wait(extra);
+      },
       wait,
       setServoPosition,
       setServoPositionsTimed,
@@ -865,12 +881,17 @@ const RoutinesTab = forwardRef(function RoutinesTab(
         addLog?.(`[Routine] ${String(t ?? '')}`);
       },
     };
-  }, [ipc, calibration, projectModules, battery, addLog]);
+  }, [ipc, calibration, projectModules, battery, addLog, stepDelayMs]);
 
   const runRoutine = useCallback(async () => {
     if (!editorRoutine) return;
     const ws = workspaceRef.current;
     if (!ws) return;
+    try {
+      ws.highlightBlock?.(null);
+    } catch (_) {
+      // ignore
+    }
     setRunError(null);
     setRunState('running');
     setTrace([]);
@@ -894,20 +915,35 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     };
 
     try {
-      const src = workspaceToAsyncJs(ws);
+      const src = workspaceToAsyncJs(ws, { debug: true });
       // eslint-disable-next-line no-new-func
       const fn = new Function('api', src);
       await fn(api);
       setRunState(cancelState.isCancelled ? 'stopped' : 'idle');
     } catch (e) {
-      setRunState('error');
-      setRunError(e?.message || String(e));
+      if (cancelState.isCancelled || String(e?.message || '').toLowerCase() === 'cancelled') {
+        setRunState('stopped');
+      } else {
+        setRunState('error');
+        setRunError(e?.message || String(e));
+      }
+    } finally {
+      try {
+        ws.highlightBlock?.(null);
+      } catch (_) {
+        // ignore
+      }
     }
   }, [editorRoutine, api, ipc]);
 
   const stopRoutine = useCallback(async () => {
     await cancelRef.current.cancel?.();
     setRunState('stopped');
+    try {
+      workspaceRef.current?.highlightBlock?.(null);
+    } catch (_) {
+      // ignore
+    }
   }, []);
 
   const editorHeader = (
@@ -940,8 +976,8 @@ const RoutinesTab = forwardRef(function RoutinesTab(
             {runState}
           </strong>
         </span>
-        {editorDirty ? <span style={{ color: '#b26a00' }}>• unsaved</span> : null}
-        <button onClick={() => setVarsOpen(true)}>Variables…</button>
+        {editorDirty ? <span style={{ color: '#b26a00' }}>… unsaved</span> : null}
+        <button onClick={() => setVarsOpen(true)}>Variables</button>
         <button
           onClick={() => setNameDialog({ open: true, mode: 'rename', routineId: editorRoutine.id, initialName: editorRoutine.name })}
         >
@@ -969,6 +1005,19 @@ const RoutinesTab = forwardRef(function RoutinesTab(
         >
           Run
         </button>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          Slow
+          <select
+            value={String(stepDelayMs)}
+            onChange={(e) => setStepDelayMs(Number(e.target.value))}
+            disabled={runState === 'running'}
+          >
+            <option value="0">0ms</option>
+            <option value="100">100ms</option>
+            <option value="500">500ms</option>
+            <option value="1000">1000ms</option>
+          </select>
+        </label>
         <button
           onClick={stopRoutine}
           style={{ background: '#c62828', color: '#fff', border: '1px solid #8e0000' }}
