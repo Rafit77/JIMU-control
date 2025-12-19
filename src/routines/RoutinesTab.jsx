@@ -229,12 +229,17 @@ const RoutinesTab = forwardRef(function RoutinesTab(
   const workspaceRef = useRef(null);
   const hostRef = useRef(null);
   const cancelRef = useRef({ cancel: () => {} });
+  const routineXmlCacheRef = useRef(new Map()); // routineId -> xml (RAM-only until project save)
 
   const refreshList = useCallback(async () => {
     if (!ipc || !projectId) return;
     const list = await ipc.invoke('routine:list', { projectId });
     setRoutines(Array.isArray(list) ? list : []);
   }, [ipc, projectId]);
+
+  useEffect(() => {
+    routineXmlCacheRef.current.clear();
+  }, [projectId]);
 
   useEffect(() => {
     refreshList().catch(() => {});
@@ -312,7 +317,10 @@ const RoutinesTab = forwardRef(function RoutinesTab(
   const loadRoutine = useCallback(
     async (routine) => {
       if (!ipc || !projectId) return;
-      const res = await ipc.invoke('routine:loadXml', { projectId, routineId: routine.id });
+      const cached = routineXmlCacheRef.current.get(String(routine.id));
+      const res = cached
+        ? { ok: true, xml: cached }
+        : await ipc.invoke('routine:loadXml', { projectId, routineId: routine.id });
       setEditorRoutine({ id: routine.id, name: routine.name });
       setEditorXml(String(res?.xml || ''));
       setEditorDirty(false);
@@ -327,11 +335,16 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     if (!ipc || !projectId || !editorRoutine) return;
     const ws = workspaceRef.current;
     const xml = ws ? workspaceToXmlText(ws) : editorXml;
-    await ipc.invoke('routine:saveXml', { projectId, routineId: editorRoutine.id, xml });
+    routineXmlCacheRef.current.set(String(editorRoutine.id), String(xml || ''));
+    setEditorXml(String(xml || ''));
     setEditorDirty(false);
-    await refreshList();
-    addLog?.(`Routine saved: ${editorRoutine.name}`);
-  }, [ipc, projectId, editorRoutine, editorXml, refreshList, addLog]);
+    setRoutines((prev) =>
+      (Array.isArray(prev) ? prev : []).map((r) =>
+        String(r?.id) === String(editorRoutine.id) ? { ...(r || {}), updatedAt: new Date().toISOString() } : r,
+      ),
+    );
+    addLog?.(`Routine saved (RAM): ${editorRoutine.name}`);
+  }, [ipc, projectId, editorRoutine, editorXml, addLog]);
 
   const confirmLeaveEditor = useCallback(async () => {
     if (!editorRoutine) return true;
@@ -357,8 +370,15 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       stopIfRunning: async () => {
         if (runState === 'running') await cancelRef.current.cancel?.();
       },
+      flushToDisk: async () => {
+        if (!ipc || !projectId) return;
+        const entries = Array.from(routineXmlCacheRef.current.entries());
+        for (const [routineId, xml] of entries) {
+          await ipc.invoke('routine:saveXml', { projectId, routineId, xml });
+        }
+      },
     }),
-    [confirmLeaveEditor, runState],
+    [confirmLeaveEditor, runState, ipc, projectId],
   );
 
   useEffect(() => {
@@ -1073,6 +1093,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
             if (!ok) return;
             await stopRoutine();
             await ipc.invoke('routine:delete', { projectId, routineId: editorRoutine.id });
+            routineXmlCacheRef.current.delete(String(editorRoutine.id));
             await refreshList();
             setEditorRoutine(null);
             setEditorXml('');
@@ -1081,7 +1102,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
         >
           Delete
         </button>
-        <button onClick={saveRoutine}>Save</button>
+          <button onClick={saveRoutine}>Save</button>
         <button
           onClick={runRoutine}
           disabled={runState === 'running'}
@@ -1149,6 +1170,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
                     onClick={async () => {
                       const ok = window.confirm(`Delete routine "${r.name}"?`);
                       if (!ok) return;
+                      routineXmlCacheRef.current.delete(String(r.id));
                       await ipc.invoke('routine:delete', { projectId, routineId: r.id });
                       await refreshList();
                     }}

@@ -297,6 +297,11 @@ export default function App() {
 
   const saveCurrentProject = useCallback(async () => {
     if (!ipc || !currentProject?.id) return;
+    try {
+      await routinesRef.current?.flushToDisk?.();
+    } catch (e) {
+      addLog(`Routine flush failed: ${e?.message || String(e)}`);
+    }
     const dataToSave = {
       ...(currentProject.data || {}),
       hardware: {
