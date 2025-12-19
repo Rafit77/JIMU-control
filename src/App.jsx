@@ -1,8 +1,10 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import * as Slider from '@radix-ui/react-slider';
 import RoutinesTab from './routines/RoutinesTab.jsx';
+import ControllerTab from './controller/ControllerTab.jsx';
 import { batteryPercentFromVolts } from './battery.js';
 import * as globalVars from './routines/global_vars.js';
+import * as controllerState from './controller/controller_state.js';
 import servoIconUrl from '../media/servo-icon.png';
 import wheelIconUrl from '../media/wheel-icon.png';
 
@@ -264,6 +266,7 @@ export default function App() {
   }, []);
   const eyeAnimCancelRef = useRef(null);
   const routinesRef = useRef(null);
+  const controllerRef = useRef(null);
 
   const addLog = useCallback((msg) => {
     setLog((prev) => [`${new Date().toLocaleTimeString()} ${msg}`, ...prev].slice(0, 200));
@@ -305,6 +308,11 @@ export default function App() {
       // ignore
     }
   }, [currentProject?.id]);
+
+  useEffect(() => {
+    if (status !== 'Connected') return;
+    controllerState.resetAll();
+  }, [status, currentProject?.id]);
 
   const saveCurrentProject = useCallback(async () => {
     if (!ipc || !currentProject?.id) return;
@@ -1092,6 +1100,8 @@ export default function App() {
               onClick={async () => {
                 if (!ipc) return;
                 try {
+                  await routinesRef.current?.stopIfRunning?.();
+                  await controllerRef.current?.stopAllRoutines?.();
                   await ipc.invoke('jimu:emergencyStop');
                   addLog('Emergency stop issued');
                 } catch (e) {
@@ -2407,8 +2417,26 @@ export default function App() {
           )}
 
           {tab === 'controller' && (
-            <Section title="Controller (placeholder)">
-              <div style={{ color: '#777' }}>Grid of widgets for run mode; edit/run modes to be implemented.</div>
+            <Section style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', marginBottom: 0 }}>
+              <ControllerTab
+                ref={controllerRef}
+                ipc={ipc}
+                projectId={currentProject?.id}
+                status={status}
+                calibration={currentProject?.data?.calibration || {}}
+                projectModules={currentProject?.data?.hardware?.modules || {}}
+                battery={battery}
+                routines={currentProject?.data?.routines || []}
+                controllerData={currentProject?.data?.controller || { widgets: [] }}
+                onUpdateControllerData={(updater) => {
+                  updateCurrentProjectData((d) => {
+                    const prev = d?.controller || { widgets: [] };
+                    const next = typeof updater === 'function' ? updater(prev) : updater;
+                    return { ...(d || {}), controller: next };
+                  });
+                }}
+                addLog={addLog}
+              />
             </Section>
           )}
 

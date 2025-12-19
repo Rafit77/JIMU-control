@@ -1481,3 +1481,19 @@ export const workspaceToAsyncJs = (workspace, { debug = false } = {}) => {
     javascriptGenerator.STATEMENT_SUFFIX = prevSuffix;
   }
 };
+
+export const xmlTextToAsyncJs = (xmlText, { debug = false } = {}) => {
+  defineBlocksOnce();
+  const workspace = new Blockly.Workspace();
+  try {
+    const dom = xmlTextToDom(String(xmlText || '<xml></xml>'));
+    Blockly.Xml.domToWorkspace(dom, workspace);
+    return workspaceToAsyncJs(workspace, { debug });
+  } finally {
+    try {
+      workspace.dispose?.();
+    } catch (_) {
+      // ignore
+    }
+  }
+};

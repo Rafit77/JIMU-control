@@ -3,6 +3,7 @@ import * as Blockly from 'blockly';
 import { createWorkspace, setIdOptionsProvider, workspaceToAsyncJs, workspaceToXmlText } from './blockly_mvp.js';
 import { batteryPercentFromVolts } from '../battery.js';
 import * as globalVars from './global_vars.js';
+import * as controllerState from '../controller/controller_state.js';
 
 const defaultRoutineXml = '<xml xmlns="https://developers.google.com/blockly/xml"></xml>\n';
 const newId = () => {
@@ -859,25 +860,13 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     };
 
     const getSlider = (name) => {
-      if (!warnedRef.appInputs) {
-        warnedRef.appInputs = true;
-        appendTrace('Note: UI inputs (slider/joystick/switch) are not implemented yet; returning 0/false.');
-      }
-      return 0;
+      return controllerState.sliderGet(String(name ?? ''));
     };
     const getJoystick = (name, axis) => {
-      if (!warnedRef.appInputs) {
-        warnedRef.appInputs = true;
-        appendTrace('Note: UI inputs (slider/joystick/switch) are not implemented yet; returning 0/false.');
-      }
-      return 0;
+      return controllerState.joystickGetAxis(String(name ?? ''), String(axis ?? 'x') === 'y' ? 'y' : 'x');
     };
     const getSwitch = (name) => {
-      if (!warnedRef.appInputs) {
-        warnedRef.appInputs = true;
-        appendTrace('Note: UI inputs (slider/joystick/switch) are not implemented yet; returning 0/false.');
-      }
-      return false;
+      return controllerState.switchGet(String(name ?? ''));
     };
 
     const selectAction = (name) => {
@@ -963,19 +952,11 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     };
 
     const indicatorColor = (name, hex) => {
-      if (!warnedRef.appInputs) {
-        warnedRef.appInputs = true;
-        appendTrace('Note: Controller widgets are not implemented yet; indicator/display are placeholders.');
-      }
-      appendTrace(`Indicator "${String(name || '')}" color ${String(hex || '')}`);
+      controllerState.indicatorSet(String(name || ''), String(hex || '#000000'));
     };
 
     const displayShow = (name, value) => {
-      if (!warnedRef.appInputs) {
-        warnedRef.appInputs = true;
-        appendTrace('Note: Controller widgets are not implemented yet; indicator/display are placeholders.');
-      }
-      appendTrace(`Display "${String(name || '')}": ${String(value)}`);
+      controllerState.displaySet(String(name || ''), value);
     };
 
     const eyeCustom8Mask = async (eyesMask, colorsByPos) => {

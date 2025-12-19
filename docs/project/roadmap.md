@@ -26,6 +26,7 @@ Status: complete (2025-12-19)
 - Widgets (button/slider/joystick) + triggers for routines
 - Keyboard/gamepad events triggers for routines
 - timers (repeated events like every 100ms) as triggers for routines
+- Specification: `docs/project/controller.md`
 
 ## Milestone 5 — “Actions”
 - Actions workspace in app
