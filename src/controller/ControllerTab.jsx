@@ -1,14 +1,17 @@
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { GridLayout, useContainerWidth } from 'react-grid-layout';
+import { GridLayout, noCompactor, useContainerWidth } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
-import nipplejs from 'nipplejs';
 
 import * as controllerState from './controller_state.js';
 import { xmlTextToAsyncJs } from '../routines/blockly_mvp.js';
 import { createRoutineApi } from '../routines/runtime_api.js';
 
+const GRID_PX = 40;
 const ROUTINE_RETRIGGER_COOLDOWN_MS = 300;
+const BUTTON_MODE_MOMENTARY = 'momentary';
+const BUTTON_MODE_TOGGLE = 'toggle';
+const overlapNoCompactor = { ...noCompactor, allowOverlap: true };
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -31,33 +34,76 @@ const uniqName = (existing, base) => {
   return `${base}-${Date.now()}`;
 };
 
+const getNextY = (widgets) => {
+  let maxY = 0;
+  for (const w of widgets || []) {
+    const y = Number(w?.layout?.y ?? 0);
+    const h = Number(w?.layout?.h ?? 0);
+    if (!Number.isFinite(y) || !Number.isFinite(h)) continue;
+    maxY = Math.max(maxY, y + h);
+  }
+  return maxY;
+};
+
 const defaultWidget = (type, widgets) => {
   const id = newId();
   const base =
     type === 'button'
       ? 'Button'
-      : type === 'switch'
-        ? 'Switch'
-        : type === 'slider'
-          ? 'Slider'
-          : type === 'joystick'
-            ? 'Joystick'
-            : type === 'led'
-              ? 'LED'
-              : 'Display';
+      : type === 'slider'
+        ? 'Slider'
+        : type === 'joystick'
+          ? 'Joystick'
+          : type === 'led'
+            ? 'LED'
+            : 'Display';
   const name = uniqName(widgets, base);
-  const w = type === 'joystick' ? 3 : type === 'slider' ? 4 : 3;
-  const h = type === 'joystick' ? 3 : 2;
+  // Default sizes are in grid units (GRID_PX=32).
+  // Requested defaults:
+  // - button: 2x1
+  // - slider: 5x1 (horizontal) / 1x5 (vertical)
+  // - led: 2x2
+  // - display: 4x3
+  // - joystick: 4x4 (square)
+  // - timer: 1x1
+  const w =
+    type === 'button'
+      ? 2
+      : type === 'slider'
+        ? 5
+        : type === 'joystick'
+          ? 4
+          : type === 'led'
+            ? 2
+            : type === 'display'
+              ? 4
+              : type === 'timer'
+                ? 1
+                : 3;
+  const h =
+    type === 'button'
+      ? 1
+      : type === 'slider'
+        ? 1
+        : type === 'joystick'
+          ? 4
+          : type === 'led'
+            ? 2
+            : type === 'display'
+              ? 3
+              : type === 'timer'
+                ? 1
+                : 2;
   const widget = {
     id,
     type,
     name,
-    layout: { i: id, x: 0, y: Infinity, w, h },
+    layout: { i: id, x: 0, y: getNextY(widgets), w, h },
     props:
       type === 'slider'
         ? { orientation: 'h', min: 0, max: 100, step: 1, value: 0 }
-        : type === 'switch'
-          ? { value: false }
+        : type === 'button'
+          ? { mode: BUTTON_MODE_MOMENTARY, value: false }
           : type === 'led'
             ? { shape: 'round', color: '#000000' }
             : type === 'display'
@@ -66,15 +112,13 @@ const defaultWidget = (type, widgets) => {
     bindings:
       type === 'button'
         ? { onPress: '', onRelease: '', key: '', gamepad: { index: 0, button: -1 } }
-        : type === 'switch'
-          ? { onOn: '', onOff: '' }
-          : type === 'slider'
-            ? { onChange: '' }
-            : type === 'joystick'
-              ? { onChange: '', gamepad: { index: 0, axisX: -1, axisY: -1 } }
-              : type === 'timer'
-                ? { everyMs: 1000, onTick: '' }
-                : {},
+        : type === 'slider'
+          ? { onChange: '' }
+          : type === 'joystick'
+            ? { onChange: '', gamepad: { index: 0, axisX: -1, axisY: -1 } }
+            : type === 'timer'
+              ? { everyMs: 1000, onTick: '' }
+              : {},
   };
   return widget;
 };
@@ -83,13 +127,223 @@ const WidgetConfig = ({ open, widget, routines, onClose, onChange, onDelete }) =
   if (!open || !widget) return null;
   const routineOptions = [{ id: '', name: '(none)' }, ...(Array.isArray(routines) ? routines : [])];
 
-  const setField = (path, value) => {
+  const setField = (path, value, mutator) => {
     const next = JSON.parse(JSON.stringify(widget));
     let cur = next;
     for (let i = 0; i < path.length - 1; i += 1) cur = cur[path[i]];
     cur[path[path.length - 1]] = value;
+    mutator?.(next);
     onChange(next);
   };
+
+  const [captureKey, setCaptureKey] = useState(false);
+  const [captureGamepad, setCaptureGamepad] = useState(false);
+  const [captureJoystickAxes, setCaptureJoystickAxes] = useState(false);
+
+  useEffect(() => {
+    setCaptureKey(false);
+    setCaptureGamepad(false);
+    setCaptureJoystickAxes(false);
+  }, [widget?.id]);
+
+  useEffect(() => {
+    if (!widget?.bindings?.key) setCaptureKey(false);
+  }, [widget?.bindings?.key]);
+
+  useEffect(() => {
+    if (Number(widget?.bindings?.gamepad?.button ?? -1) < 0) setCaptureGamepad(false);
+  }, [widget?.bindings?.gamepad?.button]);
+
+  useEffect(() => {
+    const ax = Number(widget?.bindings?.gamepad?.axisX ?? -1);
+    const ay = Number(widget?.bindings?.gamepad?.axisY ?? -1);
+    if (ax < 0 && ay < 0) setCaptureJoystickAxes(false);
+  }, [widget?.bindings?.gamepad?.axisX, widget?.bindings?.gamepad?.axisY]);
+
+  useEffect(() => {
+    if (!captureKey) return;
+    const onDown = (e) => {
+      if (String(e.code || '') === 'Escape') {
+        e.preventDefault();
+        setCaptureKey(false);
+        return;
+      }
+      const code = String(e.code || '');
+      if (!code) return;
+      e.preventDefault();
+      setField(['bindings', 'key'], code);
+      setCaptureKey(false);
+    };
+    window.addEventListener('keydown', onDown, true);
+    return () => window.removeEventListener('keydown', onDown, true);
+  }, [captureKey, setField]);
+
+  useEffect(() => {
+    if (!captureGamepad) return;
+    let cancelled = false;
+
+    const onEsc = (e) => {
+      if (String(e.code || '') !== 'Escape') return;
+      e.preventDefault();
+      cancelled = true;
+      setCaptureGamepad(false);
+    };
+    window.addEventListener('keydown', onEsc, true);
+
+    const initialPressed = new Set();
+    const readInitial = () => {
+      const pads = navigator?.getGamepads?.() || [];
+      for (let pi = 0; pi < pads.length; pi += 1) {
+        const pad = pads[pi];
+        const buttons = Array.isArray(pad?.buttons) ? pad.buttons : [];
+        for (let bi = 0; bi < buttons.length; bi += 1) {
+          if (buttons[bi]?.pressed) initialPressed.add(`${pi}:${bi}`);
+        }
+      }
+    };
+    readInitial();
+
+    const tick = () => {
+      if (cancelled) return;
+      const pads = navigator?.getGamepads?.() || [];
+      for (let pi = 0; pi < pads.length; pi += 1) {
+        const pad = pads[pi];
+        if (!pad) continue;
+        const buttons = Array.isArray(pad.buttons) ? pad.buttons : [];
+        for (let bi = 0; bi < buttons.length; bi += 1) {
+          const pressed = Boolean(buttons[bi]?.pressed);
+          if (!pressed) continue;
+          const key = `${pi}:${bi}`;
+          if (initialPressed.has(key)) continue;
+          setField(['bindings', 'gamepad', 'index'], pi, (next) => {
+            if (!next.bindings) next.bindings = {};
+            if (!next.bindings.gamepad) next.bindings.gamepad = {};
+            next.bindings.gamepad.index = pi;
+            next.bindings.gamepad.button = bi;
+          });
+          setCaptureGamepad(false);
+          cancelled = true;
+          return;
+        }
+      }
+    };
+
+    const t = setInterval(tick, 50);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+      window.removeEventListener('keydown', onEsc, true);
+    };
+  }, [captureGamepad, setField]);
+
+  useEffect(() => {
+    if (!captureJoystickAxes) return;
+    if (typeof navigator?.getGamepads !== 'function') {
+      setCaptureJoystickAxes(false);
+      return;
+    }
+
+    let cancelled = false;
+    const onEsc = (e) => {
+      if (String(e.code || '') !== 'Escape') return;
+      e.preventDefault();
+      cancelled = true;
+      setCaptureJoystickAxes(false);
+    };
+    window.addEventListener('keydown', onEsc, true);
+
+    const baselineAxes = new Map(); // padIndex -> number[]
+    const readBaseline = () => {
+      const pads = navigator?.getGamepads?.() || [];
+      for (let pi = 0; pi < pads.length; pi += 1) {
+        const pad = pads[pi];
+        if (!pad) continue;
+        const axes = Array.isArray(pad.axes) ? pad.axes : [];
+        baselineAxes.set(pi, axes.map((v) => Number(v ?? 0)));
+      }
+    };
+    readBaseline();
+
+    const chooseSecondAxis = (deltas) => {
+      // pick the second-highest delta above a small threshold, if available
+      let bestI = -1;
+      let bestV = 0;
+      for (let i = 0; i < deltas.length; i += 1) {
+        const v = Math.abs(deltas[i]);
+        if (v > bestV) {
+          bestV = v;
+          bestI = i;
+        }
+      }
+      if (bestI < 0) return -1;
+      // zero-out the best and search again
+      const tmp = deltas.slice();
+      tmp[bestI] = 0;
+      let secondI = -1;
+      let secondV = 0;
+      for (let i = 0; i < tmp.length; i += 1) {
+        const v = Math.abs(tmp[i]);
+        if (v > secondV) {
+          secondV = v;
+          secondI = i;
+        }
+      }
+      return secondV >= 0.2 ? secondI : -1;
+    };
+
+    const tick = () => {
+      if (cancelled) return;
+      const pads = navigator?.getGamepads?.() || [];
+      for (let pi = 0; pi < pads.length; pi += 1) {
+        const pad = pads[pi];
+        if (!pad) continue;
+        const axes = Array.isArray(pad.axes) ? pad.axes : [];
+        const base = baselineAxes.get(pi) || axes.map(() => 0);
+        const deltas = axes.map((v, i) => Number(v ?? 0) - Number(base[i] ?? 0));
+
+        let maxI = -1;
+        let maxV = 0;
+        for (let i = 0; i < deltas.length; i += 1) {
+          const v = Math.abs(deltas[i]);
+          if (v > maxV) {
+            maxV = v;
+            maxI = i;
+          }
+        }
+
+        // require a clear movement
+        if (maxV < 0.35 || maxI < 0) continue;
+
+        // Prefer common stick pairing (0/1, 2/3, ...)
+        let a = maxI;
+        let b = maxI % 2 === 0 ? maxI + 1 : maxI - 1;
+        if (b < 0 || b >= axes.length) b = -1;
+        if (b < 0) b = chooseSecondAxis(deltas);
+        if (b < 0) continue;
+
+        const axisX = Math.min(a, b) % 2 === 0 ? Math.min(a, b) : Math.max(a, b);
+        const axisY = axisX === a ? b : a;
+
+        setField(['bindings', 'gamepad', 'index'], pi, (next) => {
+          if (!next.bindings) next.bindings = {};
+          if (!next.bindings.gamepad) next.bindings.gamepad = {};
+          next.bindings.gamepad.index = pi;
+          next.bindings.gamepad.axisX = axisX;
+          next.bindings.gamepad.axisY = axisY;
+        });
+        setCaptureJoystickAxes(false);
+        cancelled = true;
+        return;
+      }
+    };
+
+    const t = setInterval(tick, 50);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+      window.removeEventListener('keydown', onEsc, true);
+    };
+  }, [captureJoystickAxes, setField]);
 
   return (
     <div
@@ -122,13 +376,69 @@ const WidgetConfig = ({ open, widget, routines, onClose, onChange, onDelete }) =
 
           {widget.type === 'button' ? (
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              Keyboard shortcut (optional)
-              <input
-                placeholder="e.g. Space, KeyA"
-                value={widget.bindings?.key || ''}
-                onChange={(e) => setField(['bindings', 'key'], e.target.value)}
+              Mode
+              <select
+                value={widget.props?.mode === BUTTON_MODE_TOGGLE ? BUTTON_MODE_TOGGLE : BUTTON_MODE_MOMENTARY}
+                onChange={(e) => {
+                  const mode = e.target.value === BUTTON_MODE_TOGGLE ? BUTTON_MODE_TOGGLE : BUTTON_MODE_MOMENTARY;
+                  setField(['props', 'mode'], mode, (next) => {
+                    if (!next.props) next.props = {};
+                    if (mode === BUTTON_MODE_MOMENTARY) next.props.value = false;
+                    if (mode === BUTTON_MODE_TOGGLE) next.props.value = Boolean(next.props.value);
+                  });
+                }}
                 style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }}
-              />
+              >
+                <option value={BUTTON_MODE_MOMENTARY}>Momentary (pressed)</option>
+                <option value={BUTTON_MODE_TOGGLE}>Toggle (on/off)</option>
+              </select>
+            </label>
+          ) : null}
+
+          {widget.type === 'button' ? (
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              Keyboard shortcut (optional)
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setCaptureKey((v) => !v);
+                    setCaptureGamepad(false);
+                    setCaptureJoystickAxes(false);
+                  }}
+                  disabled={captureGamepad}
+                  style={{ padding: '8px 10px' }}
+                >
+                  {captureKey ? 'Press any key…' : 'Set'}
+                </button>
+                <div style={{ fontSize: 12, color: '#555' }}>
+                  {captureKey ? 'ESC cancels' : widget.bindings?.key ? `Key: ${String(widget.bindings.key)}` : 'Key: (none)'}
+                </div>
+                {widget.bindings?.key ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      try {
+                        document.activeElement?.blur?.();
+                      } catch (_) {
+                        // ignore
+                      }
+                      setCaptureKey(false);
+                      setCaptureGamepad(false);
+                      setCaptureJoystickAxes(false);
+                      setField(['bindings', 'key'], '');
+                    }}
+                    disabled={captureKey || captureGamepad}
+                    style={{ padding: '8px 10px' }}
+                  >
+                    Clear
+                  </button>
+                ) : null}
+              </div>
             </label>
           ) : null}
 
@@ -136,20 +446,55 @@ const WidgetConfig = ({ open, widget, routines, onClose, onChange, onDelete }) =
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               Gamepad button (optional)
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input
-                  type="number"
-                  title="Gamepad index"
-                  value={Number(widget.bindings?.gamepad?.index ?? 0)}
-                  onChange={(e) => setField(['bindings', 'gamepad', 'index'], Number(e.target.value))}
-                  style={{ width: 90, padding: 8, border: '1px solid #ddd', borderRadius: 6 }}
-                />
-                <input
-                  type="number"
-                  title="Button index (-1 = none)"
-                  value={Number(widget.bindings?.gamepad?.button ?? -1)}
-                  onChange={(e) => setField(['bindings', 'gamepad', 'button'], Number(e.target.value))}
-                  style={{ width: 110, padding: 8, border: '1px solid #ddd', borderRadius: 6 }}
-                />
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setCaptureGamepad((v) => !v);
+                    setCaptureKey(false);
+                    setCaptureJoystickAxes(false);
+                  }}
+                  disabled={captureKey || typeof navigator?.getGamepads !== 'function'}
+                  style={{ padding: '8px 10px' }}
+                >
+                  {captureGamepad ? 'Press a gamepad button…' : 'Learn'}
+                </button>
+                <div style={{ fontSize: 12, color: '#555' }}>
+                  {typeof navigator?.getGamepads !== 'function'
+                    ? 'Gamepad API not available'
+                    : captureGamepad
+                      ? 'ESC cancels'
+                      : Number(widget.bindings?.gamepad?.button ?? -1) >= 0
+                        ? `Pad ${Number(widget.bindings?.gamepad?.index ?? 0)} / Btn ${Number(widget.bindings?.gamepad?.button ?? -1)}`
+                        : 'Button: (none)'}
+                </div>
+                {Number(widget.bindings?.gamepad?.button ?? -1) >= 0 ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      try {
+                        document.activeElement?.blur?.();
+                      } catch (_) {
+                        // ignore
+                      }
+                      setCaptureGamepad(false);
+                      setCaptureKey(false);
+                      setCaptureJoystickAxes(false);
+                      setField(['bindings', 'gamepad', 'button'], -1, (next) => {
+                        if (!next.bindings) next.bindings = {};
+                        if (!next.bindings.gamepad) next.bindings.gamepad = {};
+                        next.bindings.gamepad.button = -1;
+                      });
+                    }}
+                    disabled={captureKey || captureGamepad}
+                    style={{ padding: '8px 10px' }}
+                  >
+                    Clear
+                  </button>
+                ) : null}
               </div>
             </label>
           ) : null}
@@ -159,7 +504,19 @@ const WidgetConfig = ({ open, widget, routines, onClose, onChange, onDelete }) =
               Orientation
               <select
                 value={widget.props?.orientation || 'h'}
-                onChange={(e) => setField(['props', 'orientation'], e.target.value === 'v' ? 'v' : 'h')}
+                onChange={(e) => {
+                  const orientation = e.target.value === 'v' ? 'v' : 'h';
+                  setField(['props', 'orientation'], orientation, (next) => {
+                    if (!next.layout) return;
+                    if (orientation === 'h') {
+                      next.layout.w = 5;
+                      next.layout.h = 1;
+                    } else {
+                      next.layout.w = 1;
+                      next.layout.h = 5;
+                    }
+                  });
+                }}
                 style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }}
               >
                 <option value="h">Horizontal</option>
@@ -183,28 +540,52 @@ const WidgetConfig = ({ open, widget, routines, onClose, onChange, onDelete }) =
           {widget.type === 'joystick' ? (
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               Gamepad axes (optional)
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input
-                  type="number"
-                  title="Gamepad index"
-                  value={Number(widget.bindings?.gamepad?.index ?? 0)}
-                  onChange={(e) => setField(['bindings', 'gamepad', 'index'], Number(e.target.value))}
-                  style={{ width: 90, padding: 8, border: '1px solid #ddd', borderRadius: 6 }}
-                />
-                <input
-                  type="number"
-                  title="Axis X (-1 = none)"
-                  value={Number(widget.bindings?.gamepad?.axisX ?? -1)}
-                  onChange={(e) => setField(['bindings', 'gamepad', 'axisX'], Number(e.target.value))}
-                  style={{ width: 110, padding: 8, border: '1px solid #ddd', borderRadius: 6 }}
-                />
-                <input
-                  type="number"
-                  title="Axis Y (-1 = none)"
-                  value={Number(widget.bindings?.gamepad?.axisY ?? -1)}
-                  onChange={(e) => setField(['bindings', 'gamepad', 'axisY'], Number(e.target.value))}
-                  style={{ width: 110, padding: 8, border: '1px solid #ddd', borderRadius: 6 }}
-                />
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setCaptureJoystickAxes((v) => !v);
+                    setCaptureKey(false);
+                    setCaptureGamepad(false);
+                  }}
+                  disabled={captureKey || captureGamepad || typeof navigator?.getGamepads !== 'function'}
+                  style={{ padding: '8px 10px' }}
+                >
+                  {captureJoystickAxes ? 'Move a stick…' : 'Set'}
+                </button>
+                <div style={{ fontSize: 12, color: '#555' }}>
+                  {typeof navigator?.getGamepads !== 'function'
+                    ? 'Gamepad API not available'
+                    : captureJoystickAxes
+                      ? 'ESC cancels'
+                      : Number(widget.bindings?.gamepad?.axisX ?? -1) >= 0 || Number(widget.bindings?.gamepad?.axisY ?? -1) >= 0
+                        ? `Pad ${Number(widget.bindings?.gamepad?.index ?? 0)} / Axes ${Number(
+                            widget.bindings?.gamepad?.axisX ?? -1,
+                          )},${Number(widget.bindings?.gamepad?.axisY ?? -1)}`
+                        : 'Axes: (none)'}
+                </div>
+                {Number(widget.bindings?.gamepad?.axisX ?? -1) >= 0 || Number(widget.bindings?.gamepad?.axisY ?? -1) >= 0 ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setCaptureJoystickAxes(false);
+                      setField(['bindings', 'gamepad', 'axisX'], -1, (next) => {
+                        if (!next.bindings) next.bindings = {};
+                        if (!next.bindings.gamepad) next.bindings.gamepad = {};
+                        next.bindings.gamepad.axisX = -1;
+                        next.bindings.gamepad.axisY = -1;
+                      });
+                    }}
+                    disabled={captureJoystickAxes || captureKey || captureGamepad}
+                    style={{ padding: '8px 10px' }}
+                  >
+                    Clear
+                  </button>
+                ) : null}
               </div>
             </label>
           ) : null}
@@ -238,39 +619,6 @@ const WidgetConfig = ({ open, widget, routines, onClose, onChange, onDelete }) =
                 >
                   {routineOptions.map((r) => (
                     <option key={`rr-${r.id}`} value={r.id}>
-                      {r.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          ) : null}
-
-          {widget.type === 'switch' ? (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                onOn → routine
-                <select
-                  value={widget.bindings?.onOn || ''}
-                  onChange={(e) => setField(['bindings', 'onOn'], e.target.value)}
-                  style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }}
-                >
-                  {routineOptions.map((r) => (
-                    <option key={`so-${r.id}`} value={r.id}>
-                      {r.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                onOff → routine
-                <select
-                  value={widget.bindings?.onOff || ''}
-                  onChange={(e) => setField(['bindings', 'onOff'], e.target.value)}
-                  style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }}
-                >
-                  {routineOptions.map((r) => (
-                    <option key={`sf-${r.id}`} value={r.id}>
                       {r.name}
                     </option>
                   ))}
@@ -356,40 +704,112 @@ const DisplayWidget = ({ name, value }) => (
 );
 
 const JoystickWidget = ({ name, onChange, runMode }) => {
-  const hostRef = useRef(null);
-  useEffect(() => {
-    if (!runMode) return;
-    if (!hostRef.current) return;
-    const manager = nipplejs.create({
-      zone: hostRef.current,
-      mode: 'static',
-      position: { left: '50%', top: '50%' },
-      color: '#0b3d91',
-      size: 110,
-    });
-    const handleMove = (_e, data) => {
-      const x = clamp(Number(data?.vector?.x ?? 0), -1, 1);
-      const y = clamp(Number(data?.vector?.y ?? 0), -1, 1);
+  const zoneRef = useRef(null);
+  const [knob, setKnob] = useState({ x: 0, y: 0 }); // px offset from center
+
+  const knobSize = GRID_PX; // requested 32x32 active part
+
+  const setFromClientXY = useCallback(
+    (clientX, clientY) => {
+      const el = zoneRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      const dx = clientX - cx;
+      const dy = clientY - cy;
+      const maxR = Math.max(1, Math.min(r.width, r.height) / 2 - knobSize / 2 - 4);
+      const len = Math.hypot(dx, dy);
+      const scale = len > maxR ? maxR / len : 1;
+      const px = dx * scale;
+      const py = dy * scale;
+      setKnob({ x: px, y: py });
+      const x = clamp(px / maxR, -1, 1);
+      const y = clamp(py / maxR, -1, 1); // gamepad-like: down = +1, up = -1
       onChange?.({ x, y });
-    };
-    const handleEnd = () => onChange?.({ x: 0, y: 0 });
-    manager.on('move', handleMove);
-    manager.on('end', handleEnd);
-    return () => {
-      try {
-        manager.off('move', handleMove);
-        manager.off('end', handleEnd);
-        manager.destroy();
-      } catch (_) {
-        // ignore
-      }
-    };
-  }, [runMode]);
+    },
+    [knobSize, onChange],
+  );
+
+  const reset = useCallback(() => {
+    setKnob({ x: 0, y: 0 });
+    onChange?.({ x: 0, y: 0 });
+  }, [onChange]);
 
   return (
     <div style={{ height: '100%', width: '100%', position: 'relative' }}>
       <div style={{ position: 'absolute', left: 8, top: 6, fontSize: 12, fontWeight: 600 }}>{name}</div>
-      <div ref={hostRef} style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
+      <div
+        ref={zoneRef}
+        className={runMode ? 'controller-no-drag' : undefined}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          touchAction: runMode ? 'none' : 'auto',
+        }}
+        onPointerDown={(e) => {
+          if (!runMode) return;
+          try {
+            e.currentTarget.setPointerCapture?.(e.pointerId);
+          } catch (_) {
+            // ignore
+          }
+          setFromClientXY(e.clientX, e.clientY);
+        }}
+        onPointerMove={(e) => {
+          if (!runMode) return;
+          if (!(e.buttons & 1)) return;
+          setFromClientXY(e.clientX, e.clientY);
+        }}
+        onPointerUp={() => {
+          if (!runMode) return;
+          reset();
+        }}
+        onPointerCancel={() => {
+          if (!runMode) return;
+          reset();
+        }}
+        onLostPointerCapture={() => {
+          if (!runMode) return;
+          reset();
+        }}
+      >
+        <div
+          style={{
+            position: 'relative',
+            width: '100%',
+            height: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <div
+            style={{
+              width: '70%',
+              height: '70%',
+              borderRadius: 999,
+              border: '2px solid rgba(11,61,145,0.25)',
+              background: 'radial-gradient(circle, rgba(11,61,145,0.10) 0%, rgba(11,61,145,0.03) 60%, transparent 70%)',
+            }}
+          />
+          <div
+            style={{
+              position: 'absolute',
+              width: knobSize,
+              height: knobSize,
+              borderRadius: 10,
+              background: '#0b3d91',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
+              transform: `translate(${knob.x}px, ${knob.y}px)`,
+              opacity: runMode ? 1 : 0.65,
+            }}
+          />
+        </div>
+      </div>
     </div>
   );
 };
@@ -401,20 +821,77 @@ const ControllerTab = forwardRef(function ControllerTab(
   const widgets = Array.isArray(controllerData?.widgets) ? controllerData.widgets : [];
   const [runMode, setRunMode] = useState(false);
   const [selectedId, setSelectedId] = useState('');
+  const [configWidgetId, setConfigWidgetId] = useState('');
   const { width: gridWidth, mounted: gridMounted, containerRef: gridHostRef } = useContainerWidth({
     measureBeforeMount: true,
     initialWidth: 1200,
   });
+  const cols = useMemo(() => Math.max(1, Math.floor(Number(gridWidth || 0) / GRID_PX)), [gridWidth]);
+  const snappedWidth = useMemo(() => Math.max(GRID_PX, cols * GRID_PX), [cols]);
+  const colPx = GRID_PX;
 
   const runningRef = useRef(new Map()); // routineId -> { cancelRef }
   const lastStartRef = useRef(new Map()); // routineId -> ts
+  const widgetsRef = useRef(widgets);
+  const prevButtonsRef = useRef(new Map()); // widgetId -> bool
+  const prevJoyRef = useRef(new Map()); // widgetId -> {x,y}
 
   const getWidget = (id) => widgets.find((w) => String(w?.id) === String(id)) || null;
   const selectedWidget = getWidget(selectedId);
+  const configWidget = getWidget(configWidgetId);
 
-  const updateWidgets = (nextWidgets) => {
+  useEffect(() => {
+    widgetsRef.current = widgets;
+  }, [widgets]);
+
+  const updateWidgets = useCallback((nextWidgets) => {
     onUpdateControllerData?.((prev) => ({ ...(prev || {}), widgets: nextWidgets }));
-  };
+  }, [onUpdateControllerData]);
+
+  // One-time migrations for older controller data.
+  useEffect(() => {
+    let changed = false;
+    const nextWidgets = widgets.map((w) => {
+      if (w?.type === 'switch') {
+        changed = true;
+        return {
+          ...w,
+          type: 'button',
+          props: { mode: BUTTON_MODE_TOGGLE, value: Boolean(w.props?.value) },
+          bindings: {
+            onPress: String(w.bindings?.onOn || ''),
+            onRelease: String(w.bindings?.onOff || ''),
+            key: '',
+            gamepad: { index: 0, button: -1 },
+          },
+        };
+      }
+
+      if (w?.type === 'slider') {
+        const lw = Number(w.layout?.w);
+        const lh = Number(w.layout?.h);
+        // Old default was 2x6; keep custom sizes as-is.
+        if (lw === 2 && lh === 6) {
+          changed = true;
+          const orientation = w.props?.orientation === 'v' ? 'v' : 'h';
+          const nextLayout = {
+            ...(w.layout || { i: w.id, x: 0, y: 0, w: 1, h: 1 }),
+            w: orientation === 'v' ? 1 : 5,
+            h: orientation === 'v' ? 5 : 1,
+          };
+          return { ...w, layout: nextLayout, props: { ...(w.props || {}), orientation } };
+        }
+      }
+
+      return w;
+    });
+    if (changed) updateWidgets(nextWidgets);
+  }, [widgets]);
+
+  useEffect(() => {
+    if (!runMode) return;
+    setConfigWidgetId('');
+  }, [runMode]);
 
   const startRoutine = useCallback(
     async (routineId) => {
@@ -494,7 +971,7 @@ const ControllerTab = forwardRef(function ControllerTab(
   useEffect(() => {
     if (!runMode) return;
     for (const w of widgets) {
-      if (w.type === 'switch') controllerState.switchSet(w.name, Boolean(w.props?.value));
+      if (w.type === 'button') controllerState.switchSet(w.name, Boolean(w.props?.value));
       if (w.type === 'slider') controllerState.sliderSet(w.name, Number(w.props?.value ?? 0));
       if (w.type === 'joystick') controllerState.joystickSet(w.name, { x: 0, y: 0 });
       if (w.type === 'led') controllerState.indicatorSet(w.name, controllerState.indicatorGet(w.name));
@@ -505,20 +982,57 @@ const ControllerTab = forwardRef(function ControllerTab(
   // Keyboard triggers (buttons only, for now)
   useEffect(() => {
     if (!runMode) return;
-    const handler = (e) => {
+    const onDown = (e) => {
+      if (e.repeat) return;
       const code = String(e.code || '');
       if (!code) return;
       for (const w of widgets) {
         if (w.type !== 'button') continue;
         if (!w.bindings?.key) continue;
         if (String(w.bindings.key) === code) {
-          const rid = String(w.bindings?.onPress || '');
-          if (rid) startRoutine(rid).catch(() => {});
+          const mode = w.props?.mode === BUTTON_MODE_TOGGLE ? BUTTON_MODE_TOGGLE : BUTTON_MODE_MOMENTARY;
+          if (mode === BUTTON_MODE_TOGGLE) {
+            const nextVal = !Boolean(w.props?.value);
+            controllerState.switchSet(w.name, nextVal);
+            const rid = nextVal ? String(w.bindings?.onPress || '') : String(w.bindings?.onRelease || '');
+            if (rid) startRoutine(rid).catch(() => {});
+            updateWidgets(
+              widgets.map((x) =>
+                x.id === w.id ? { ...x, props: { ...(x.props || {}), mode, value: nextVal } } : x,
+              ),
+            );
+          } else {
+            controllerState.switchSet(w.name, true);
+            const rid = String(w.bindings?.onPress || '');
+            if (rid) startRoutine(rid).catch(() => {});
+            updateWidgets(
+              widgets.map((x) => (x.id === w.id ? { ...x, props: { ...(x.props || {}), mode, value: true } } : x)),
+            );
+          }
         }
       }
     };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
+    const onUp = (e) => {
+      const code = String(e.code || '');
+      if (!code) return;
+      for (const w of widgets) {
+        if (w.type !== 'button') continue;
+        if (!w.bindings?.key) continue;
+        if (String(w.bindings.key) !== code) continue;
+        const mode = w.props?.mode === BUTTON_MODE_TOGGLE ? BUTTON_MODE_TOGGLE : BUTTON_MODE_MOMENTARY;
+        if (mode === BUTTON_MODE_TOGGLE) continue;
+        controllerState.switchSet(w.name, false);
+        const rid = String(w.bindings?.onRelease || '');
+        if (rid) startRoutine(rid).catch(() => {});
+        updateWidgets(widgets.map((x) => (x.id === w.id ? { ...x, props: { ...(x.props || {}), mode, value: false } } : x)));
+      }
+    };
+    window.addEventListener('keydown', onDown);
+    window.addEventListener('keyup', onUp);
+    return () => {
+      window.removeEventListener('keydown', onDown);
+      window.removeEventListener('keyup', onUp);
+    };
   }, [runMode, widgets, startRoutine]);
 
   // Gamepad triggers (buttons + joystick axes)
@@ -526,27 +1040,54 @@ const ControllerTab = forwardRef(function ControllerTab(
     if (!runMode) return;
     if (typeof navigator?.getGamepads !== 'function') return;
 
-    const prevButtons = new Map(); // widgetId -> bool
-    const prevJoy = new Map(); // widgetId -> {x,y}
+    prevButtonsRef.current.clear();
+    prevJoyRef.current.clear();
+
+    const setButtonValue = (widgetId, name, mode, value, routineId) => {
+      controllerState.switchSet(name, Boolean(value));
+      if (routineId) startRoutine(routineId).catch(() => {});
+      const current = widgetsRef.current;
+      const next = current.map((x) =>
+        x.id === widgetId ? { ...x, props: { ...(x.props || {}), mode, value: Boolean(value) } } : x,
+      );
+      widgetsRef.current = next;
+      updateWidgets(next);
+    };
+
     const tick = () => {
       const pads = navigator.getGamepads?.() || [];
-      for (const w of widgets) {
+      const ws = widgetsRef.current || [];
+      for (const w of ws) {
         if (w.type === 'button') {
           const idx = Number(w.bindings?.gamepad?.index ?? 0);
           const btn = Number(w.bindings?.gamepad?.button ?? -1);
           if (btn < 0) continue;
           const pad = pads[idx];
           const pressed = Boolean(pad?.buttons?.[btn]?.pressed);
-          const prev = Boolean(prevButtons.get(w.id) ?? false);
-          if (!prev && pressed) {
-            const rid = String(w.bindings?.onPress || '');
-            if (rid) startRoutine(rid).catch(() => {});
+          const prev = Boolean(prevButtonsRef.current.get(w.id) ?? false);
+          const mode = w.props?.mode === BUTTON_MODE_TOGGLE ? BUTTON_MODE_TOGGLE : BUTTON_MODE_MOMENTARY;
+          if (mode === BUTTON_MODE_TOGGLE) {
+            if (!prev && pressed) {
+              const nextVal = !Boolean(w.props?.value);
+              const rid = nextVal ? String(w.bindings?.onPress || '') : String(w.bindings?.onRelease || '');
+              setButtonValue(w.id, w.name, mode, nextVal, rid);
+            }
+          } else {
+            if (!prev && pressed) {
+              const rid = String(w.bindings?.onPress || '');
+              setButtonValue(w.id, w.name, mode, true, rid);
+            }
+            if (prev && !pressed) {
+              const rid = String(w.bindings?.onRelease || '');
+              setButtonValue(w.id, w.name, mode, false, rid);
+            }
+            // Recovery: if we ever miss an edge, keep UI/store consistent with the polled value.
+            const currentVal = Boolean(w.props?.value);
+            if (pressed !== currentVal && !(!prev && pressed) && !(prev && !pressed)) {
+              setButtonValue(w.id, w.name, mode, pressed, '');
+            }
           }
-          if (prev && !pressed) {
-            const rid = String(w.bindings?.onRelease || '');
-            if (rid) startRoutine(rid).catch(() => {});
-          }
-          prevButtons.set(w.id, pressed);
+          prevButtonsRef.current.set(w.id, pressed);
         }
 
         if (w.type === 'joystick') {
@@ -557,13 +1098,13 @@ const ControllerTab = forwardRef(function ControllerTab(
           const pad = pads[idx];
           const x = ax >= 0 ? clamp(Number(pad?.axes?.[ax] ?? 0), -1, 1) : 0;
           const y = ay >= 0 ? clamp(Number(pad?.axes?.[ay] ?? 0), -1, 1) : 0;
-          const prev = prevJoy.get(w.id) || { x: 0, y: 0 };
+          const prev = prevJoyRef.current.get(w.id) || { x: 0, y: 0 };
           const changed = Math.abs(x - prev.x) > 0.01 || Math.abs(y - prev.y) > 0.01;
           if (changed) {
             controllerState.joystickSet(w.name, { x, y });
             const rid = String(w.bindings?.onChange || '');
             if (rid) startRoutine(rid).catch(() => {});
-            prevJoy.set(w.id, { x, y });
+            prevJoyRef.current.set(w.id, { x, y });
           }
         }
       }
@@ -571,7 +1112,7 @@ const ControllerTab = forwardRef(function ControllerTab(
 
     const t = setInterval(tick, 50);
     return () => clearInterval(t);
-  }, [runMode, widgets, startRoutine]);
+  }, [runMode, startRoutine, updateWidgets]);
 
   // Live store subscription to re-render LEDs/displays
   const [, bump] = useState(0);
@@ -591,6 +1132,9 @@ const ControllerTab = forwardRef(function ControllerTab(
           </strong>
         </span>
         <button onClick={() => setRunMode((p) => !p)}>{runMode ? 'Design' : 'Run'}</button>
+        <span style={{ color: '#777', fontSize: 12 }}>
+          grid {GRID_PX}px | cell {Math.round(colPx * 10) / 10}×{GRID_PX} | cols {cols}
+        </span>
         {!runMode ? (
           <>
             <button
@@ -601,15 +1145,6 @@ const ControllerTab = forwardRef(function ControllerTab(
               }}
             >
               + Button
-            </button>
-            <button
-              onClick={() => {
-                const w = defaultWidget('switch', widgets);
-                updateWidgets([...widgets, w]);
-                setSelectedId(w.id);
-              }}
-            >
-              + Switch
             </button>
             <button
               onClick={() => {
@@ -652,7 +1187,7 @@ const ControllerTab = forwardRef(function ControllerTab(
                 const w = defaultWidget('timer', widgets);
                 w.type = 'timer';
                 w.name = uniqName(widgets, 'Timer');
-                w.layout = { i: w.id, x: 0, y: Infinity, w: 3, h: 2 };
+                w.layout = { i: w.id, x: 0, y: getNextY(widgets), w: 1, h: 1 };
                 w.bindings = { everyMs: 1000, onTick: '' };
                 updateWidgets([...widgets, w]);
                 setSelectedId(w.id);
@@ -666,21 +1201,61 @@ const ControllerTab = forwardRef(function ControllerTab(
       </div>
 
       <div
-        style={{ flex: 1, minHeight: 0, border: '1px solid #ddd', borderRadius: 8, background: '#fff', overflow: 'hidden' }}
+        style={{
+          flex: 1,
+          minHeight: 0,
+          border: '1px solid #ddd',
+          borderRadius: 8,
+          background: '#fff',
+          overflow: 'auto',
+          position: 'relative',
+        }}
         ref={gridHostRef}
       >
+        {!runMode ? (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              pointerEvents: 'none',
+              backgroundImage:
+                'repeating-linear-gradient(0deg, rgba(11,61,145,0.06) 0 1px, transparent 1px 100%), repeating-linear-gradient(90deg, rgba(11,61,145,0.06) 0 1px, transparent 1px 100%)',
+              backgroundSize: `${GRID_PX}px ${GRID_PX}px`,
+            }}
+          />
+        ) : null}
         {gridMounted ? (
           <GridLayout
           className="layout"
           layout={layout}
-          cols={12}
-          rowHeight={60}
-          width={gridWidth}
-          isDraggable={!runMode}
-          isResizable={!runMode}
+          width={snappedWidth}
+          gridConfig={{
+            cols,
+             rowHeight: GRID_PX,
+             margin: [0, 0],
+             containerPadding: [0, 0],
+           }}
+          compactor={overlapNoCompactor}
+          dragConfig={{
+            enabled: !runMode,
+          }}
+          resizeConfig={{
+            enabled: !runMode,
+          }}
+          style={{
+            minHeight: '100%',
+            position: 'relative',
+            zIndex: 1,
+          }}
           onLayoutChange={(next) => {
             if (runMode) return;
-            const byId = new Map(next.map((l) => [String(l.i), l]));
+            const nextFixed = next.map((l) => {
+              const w = widgets.find((x) => String(x.id) === String(l.i));
+              if (!w || w.type !== 'joystick') return l;
+              const size = Math.max(Number(l.w || 1), Number(l.h || 1));
+              return { ...l, w: size, h: size };
+            });
+            const byId = new Map(nextFixed.map((l) => [String(l.i), l]));
             updateWidgets(
               widgets.map((w) => ({
                 ...w,
@@ -695,25 +1270,83 @@ const ControllerTab = forwardRef(function ControllerTab(
               border: isSelected ? '2px solid #0b3d91' : '1px solid #ddd',
               borderRadius: 8,
               background: '#fafafa',
-              padding: 6,
+              padding: 4,
               overflow: 'hidden',
               cursor: runMode ? 'default' : 'pointer',
+              userSelect: 'none',
+              boxSizing: 'border-box',
             };
 
             if (w.type === 'button') {
+              const mode = w.props?.mode === BUTTON_MODE_TOGGLE ? BUTTON_MODE_TOGGLE : BUTTON_MODE_MOMENTARY;
+              const val = Boolean(w.props?.value);
               return (
-                <div key={w.id} style={commonStyle} onMouseDown={() => !runMode && setSelectedId(w.id)}>
+                <div
+                  key={w.id}
+                  style={commonStyle}
+                  onPointerDown={() => !runMode && setSelectedId(w.id)}
+                  onContextMenu={(e) => {
+                    if (runMode) return;
+                    e.preventDefault();
+                    setSelectedId(w.id);
+                    setConfigWidgetId(w.id);
+                  }}
+                >
                   <button
-                    style={{ width: '100%', height: '100%' }}
-                    onMouseDown={() => {
+                    disabled={!runMode}
+                    aria-pressed={mode === BUTTON_MODE_TOGGLE ? val : undefined}
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      minWidth: 0,
+                      minHeight: 0,
+                      touchAction: 'manipulation',
+                      background: val ? '#0b3d91' : undefined,
+                      color: val ? '#fff' : undefined,
+                    }}
+                    onClick={() => {
                       if (!runMode) return;
+                      if (mode !== BUTTON_MODE_TOGGLE) return;
+                      const nextVal = !Boolean(w.props?.value);
+                      controllerState.switchSet(w.name, nextVal);
+                      const rid = nextVal ? String(w.bindings?.onPress || '') : String(w.bindings?.onRelease || '');
+                      if (rid) startRoutine(rid).catch(() => {});
+                      updateWidgets(
+                        widgets.map((x) => (x.id === w.id ? { ...x, props: { ...(x.props || {}), mode, value: nextVal } } : x)),
+                      );
+                    }}
+                    onPointerDown={(e) => {
+                      if (!runMode) return;
+                      if (mode === BUTTON_MODE_TOGGLE) return;
+                      try {
+                        e.currentTarget?.setPointerCapture?.(e.pointerId);
+                      } catch (_) {
+                        // ignore
+                      }
+                      controllerState.switchSet(w.name, true);
                       const rid = String(w.bindings?.onPress || '');
                       if (rid) startRoutine(rid).catch(() => {});
+                      updateWidgets(
+                        widgets.map((x) => (x.id === w.id ? { ...x, props: { ...(x.props || {}), mode, value: true } } : x)),
+                      );
                     }}
-                    onMouseUp={() => {
+                    onPointerUp={() => {
                       if (!runMode) return;
+                      if (mode === BUTTON_MODE_TOGGLE) return;
+                      controllerState.switchSet(w.name, false);
                       const rid = String(w.bindings?.onRelease || '');
                       if (rid) startRoutine(rid).catch(() => {});
+                      updateWidgets(
+                        widgets.map((x) => (x.id === w.id ? { ...x, props: { ...(x.props || {}), mode, value: false } } : x)),
+                      );
+                    }}
+                    onPointerCancel={() => {
+                      if (!runMode) return;
+                      if (mode === BUTTON_MODE_TOGGLE) return;
+                      controllerState.switchSet(w.name, false);
+                      updateWidgets(
+                        widgets.map((x) => (x.id === w.id ? { ...x, props: { ...(x.props || {}), mode, value: false } } : x)),
+                      );
                     }}
                   >
                     {w.name}
@@ -722,73 +1355,92 @@ const ControllerTab = forwardRef(function ControllerTab(
               );
             }
 
-            if (w.type === 'switch') {
-              return (
-                <div key={w.id} style={commonStyle} onMouseDown={() => !runMode && setSelectedId(w.id)}>
-                  <label style={{ display: 'flex', gap: 10, alignItems: 'center', height: '100%' }}>
-                    <input
-                      type="checkbox"
-                      disabled={!runMode}
-                      checked={Boolean(w.props?.value)}
-                      onChange={(e) => {
-                        const val = Boolean(e.target.checked);
-                        controllerState.switchSet(w.name, val);
-                        const rid = val ? String(w.bindings?.onOn || '') : String(w.bindings?.onOff || '');
-                        if (rid) startRoutine(rid).catch(() => {});
-                        updateWidgets(widgets.map((x) => (x.id === w.id ? { ...x, props: { ...(x.props || {}), value: val } } : x)));
-                      }}
-                    />
-                    <span>{w.name}</span>
-                  </label>
-                </div>
-              );
-            }
-
             if (w.type === 'slider') {
+              const isV = (w.props?.orientation || 'h') === 'v';
               return (
-                <div key={w.id} style={commonStyle} onMouseDown={() => !runMode && setSelectedId(w.id)}>
-                  <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                    <div style={{ fontWeight: 600, fontSize: 12 }}>{w.name}</div>
-                    <input
-                      type="range"
-                      disabled={!runMode}
-                      min={Number(w.props?.min ?? 0)}
-                      max={Number(w.props?.max ?? 100)}
-                      step={Number(w.props?.step ?? 1)}
-                      value={Number(w.props?.value ?? 0)}
-                      onChange={(e) => {
-                        const val = Number(e.target.value);
-                        controllerState.sliderSet(w.name, val);
-                        const rid = String(w.bindings?.onChange || '');
-                        if (rid) startRoutine(rid).catch(() => {});
-                        updateWidgets(widgets.map((x) => (x.id === w.id ? { ...x, props: { ...(x.props || {}), value: val } } : x)));
-                      }}
-                      style={{ flex: 1, width: '100%' }}
-                    />
-                  </div>
+                <div
+                  key={w.id}
+                  style={commonStyle}
+                  title={w.name}
+                  onPointerDown={() => !runMode && setSelectedId(w.id)}
+                  onContextMenu={(e) => {
+                    if (runMode) return;
+                    e.preventDefault();
+                    setSelectedId(w.id);
+                    setConfigWidgetId(w.id);
+                  }}
+                >
+                  <input
+                    type="range"
+                    disabled={!runMode}
+                    min={Number(w.props?.min ?? 0)}
+                    max={Number(w.props?.max ?? 100)}
+                    step={Number(w.props?.step ?? 1)}
+                    value={Number(w.props?.value ?? 0)}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      controllerState.sliderSet(w.name, val);
+                      const rid = String(w.bindings?.onChange || '');
+                      if (rid) startRoutine(rid).catch(() => {});
+                      updateWidgets(widgets.map((x) => (x.id === w.id ? { ...x, props: { ...(x.props || {}), value: val } } : x)));
+                    }}
+                    style={
+                      isV
+                        ? {
+                            width: '100%',
+                            height: '100%',
+                            writingMode: 'bt-lr',
+                            WebkitAppearance: 'slider-vertical',
+                            touchAction: 'none',
+                          }
+                        : { width: '100%', height: '100%', touchAction: 'none' }
+                    }
+                  />
                 </div>
               );
             }
 
             if (w.type === 'joystick') {
               return (
-                <div key={w.id} style={commonStyle} onMouseDown={() => !runMode && setSelectedId(w.id)}>
-                  <JoystickWidget
-                    name={w.name}
-                    runMode={runMode}
-                    onChange={(xy) => {
-                      controllerState.joystickSet(w.name, xy);
-                      const rid = String(w.bindings?.onChange || '');
-                      if (rid) startRoutine(rid).catch(() => {});
-                    }}
-                  />
+                <div
+                  key={w.id}
+                  style={commonStyle}
+                  onPointerDown={() => !runMode && setSelectedId(w.id)}
+                  onContextMenu={(e) => {
+                    if (runMode) return;
+                    e.preventDefault();
+                    setSelectedId(w.id);
+                    setConfigWidgetId(w.id);
+                  }}
+                >
+                  <div style={{ height: '100%', width: '100%', pointerEvents: runMode ? 'auto' : 'none' }}>
+                    <JoystickWidget
+                      name={w.name}
+                      runMode={runMode}
+                      onChange={(xy) => {
+                        controllerState.joystickSet(w.name, xy);
+                        const rid = String(w.bindings?.onChange || '');
+                        if (rid) startRoutine(rid).catch(() => {});
+                      }}
+                    />
+                  </div>
                 </div>
               );
             }
 
             if (w.type === 'led') {
               return (
-                <div key={w.id} style={commonStyle} onMouseDown={() => !runMode && setSelectedId(w.id)}>
+                <div
+                  key={w.id}
+                  style={commonStyle}
+                  onPointerDown={() => !runMode && setSelectedId(w.id)}
+                  onContextMenu={(e) => {
+                    if (runMode) return;
+                    e.preventDefault();
+                    setSelectedId(w.id);
+                    setConfigWidgetId(w.id);
+                  }}
+                >
                   <LedWidget name={w.name} shape={w.props?.shape || 'round'} liveColor={controllerState.indicatorGet(w.name)} />
                 </div>
               );
@@ -796,7 +1448,17 @@ const ControllerTab = forwardRef(function ControllerTab(
 
             if (w.type === 'display') {
               return (
-                <div key={w.id} style={commonStyle} onMouseDown={() => !runMode && setSelectedId(w.id)}>
+                <div
+                  key={w.id}
+                  style={commonStyle}
+                  onPointerDown={() => !runMode && setSelectedId(w.id)}
+                  onContextMenu={(e) => {
+                    if (runMode) return;
+                    e.preventDefault();
+                    setSelectedId(w.id);
+                    setConfigWidgetId(w.id);
+                  }}
+                >
                   <DisplayWidget name={w.name} value={controllerState.displayGet(w.name)} />
                 </div>
               );
@@ -804,7 +1466,17 @@ const ControllerTab = forwardRef(function ControllerTab(
 
             if (w.type === 'timer') {
               return (
-                <div key={w.id} style={commonStyle} onMouseDown={() => !runMode && setSelectedId(w.id)}>
+                <div
+                  key={w.id}
+                  style={commonStyle}
+                  onPointerDown={() => !runMode && setSelectedId(w.id)}
+                  onContextMenu={(e) => {
+                    if (runMode) return;
+                    e.preventDefault();
+                    setSelectedId(w.id);
+                    setConfigWidgetId(w.id);
+                  }}
+                >
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     <div style={{ fontWeight: 600, fontSize: 12 }}>{w.name}</div>
                     <div style={{ color: '#777', fontSize: 12 }}>every {Number(w.bindings?.everyMs ?? 1000)} ms</div>
@@ -815,7 +1487,17 @@ const ControllerTab = forwardRef(function ControllerTab(
             }
 
             return (
-              <div key={w.id} style={commonStyle} onMouseDown={() => !runMode && setSelectedId(w.id)}>
+              <div
+                key={w.id}
+                style={commonStyle}
+                onPointerDown={() => !runMode && setSelectedId(w.id)}
+                onContextMenu={(e) => {
+                  if (runMode) return;
+                  e.preventDefault();
+                  setSelectedId(w.id);
+                  setConfigWidgetId(w.id);
+                }}
+              >
                 {w.name}
               </div>
             );
@@ -825,12 +1507,13 @@ const ControllerTab = forwardRef(function ControllerTab(
       </div>
 
       <WidgetConfig
-        open={!runMode && Boolean(selectedWidget)}
-        widget={selectedWidget}
+        open={!runMode && Boolean(configWidget)}
+        widget={configWidget}
         routines={routines}
-        onClose={() => setSelectedId('')}
+        onClose={() => setConfigWidgetId('')}
         onDelete={(id) => {
           updateWidgets(widgets.filter((w) => String(w.id) !== String(id)));
+          setConfigWidgetId('');
         }}
         onChange={(next) => {
           updateWidgets(widgets.map((w) => (w.id === next.id ? next : w)));

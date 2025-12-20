@@ -8,6 +8,21 @@ This document specifies Milestone 4: a **Controller** tab that lets the user des
 - Allow multiple routines to run **in parallel** (background execution).
 - Allow routines to read controller widget state via `getSlider(name)`, `getJoystick(name, axis)`, `getSwitch(name)`.
 
+## Grid (touch-first)
+- Virtual grid: **32x32 px**.
+- Widgets snap to the grid for both **move** and **resize**.
+- Widgets can be placed **anywhere on the grid** (no auto-compaction to top).
+- Run mode: widgets are **not movable/resizable**.
+
+### Default widget sizes (grid units)
+- Button: **2x1**
+- Switch: **2x1** (alternate layout allowed: **1x2**)
+- Slider: **2x6** (default orientation: vertical)
+- LED: **2x2**
+- Display: **4x3**
+- Joystick: **4x4** (must stay square); active knob: **32x32 px**, centered by default
+- Timer: **1x1**
+
 ## MVP widget set (well-defined elements)
 We intentionally limit the widget library to a small, well-defined set:
 - **Joystick**: 2-axis (x/y) joystick.
@@ -23,7 +38,7 @@ Cross-platform requirement:
 ## Library selection (recommended)
 Use:
 - **react-grid-layout** (MIT) for the grid designer (Design/Run mode toggle).
-- **nipplejs** (MIT) for the joystick widget (touch + mouse).
+- Joystick implemented with **Pointer Events** (touch + mouse) (no extra dependency).
 
 Everything else can be implemented with simple components:
 - Button: `<button>`
@@ -54,7 +69,10 @@ Alternatives:
 - **dnd-kit** (MIT) for “drag widget type from a toolbox into the grid”.
 
 ### Joystick widget
-- **nipplejs** (MIT) for an on-screen joystick (touch + mouse friendly).
+- Use a custom joystick based on **Pointer Events**:
+  - returns normalized values `x,y` in `[-1..1]`
+  - on release/cancel, returns to `{x:0, y:0}`
+  - touch-first: `touch-action: none` on the joystick zone
 
 ### Keyboard / Gamepad triggers
 - Keyboard: browser events (`keydown`/`keyup`) are enough for MVP.
@@ -63,6 +81,7 @@ Alternatives:
 ## Design mode vs Run mode
 
 ### Design mode
+- Show grid points
 - Grid shows drop targets.
 - Widgets can be moved/resized.
 - Clicking a widget opens its configuration (name, behavior, bindings).
