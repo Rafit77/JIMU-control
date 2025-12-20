@@ -232,8 +232,10 @@ export const createRoutineApi = ({
   };
 
   const getSlider = (name) => controllerState.sliderGet(String(name ?? ''));
-  const getJoystick = (name, axis) => controllerState.joystickGetAxis(String(name ?? ''), String(axis ?? 'x') === 'y' ? 'y' : 'x');
-  const getSwitch = (name) => controllerState.switchGet(String(name ?? ''));
+  const getJoystick = (name, axis) =>
+    controllerState.joystickGetAxis(String(name ?? ''), String(axis ?? 'x') === 'y' ? 'y' : 'x');
+  const getButton = (name) => controllerState.switchGet(String(name ?? ''));
+  const getSwitch = (name) => getButton(name); // back-compat
 
   const selectAction = (name) => {
     trace('Note: select action is a placeholder (Actions playback not implemented yet).');
@@ -420,6 +422,7 @@ export const createRoutineApi = ({
     readServoDeg,
     getSlider,
     getJoystick,
+    getButton,
     getSwitch,
     selectAction,
     eyeColorMask,
@@ -447,4 +450,3 @@ export const createRoutineApi = ({
 
   return api;
 };
-

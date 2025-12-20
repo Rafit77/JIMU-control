@@ -6,7 +6,7 @@ This document specifies Milestone 4: a **Controller** tab that lets the user des
 - Create a **grid-based control panel** with draggable/resizable widgets (design mode).
 - Switch to **run mode** where the layout is locked and widgets are interactive.
 - Allow multiple routines to run **in parallel** (background execution).
-- Allow routines to read controller widget state via `getSlider(name)`, `getJoystick(name, axis)`, `getSwitch(name)`.
+- Allow routines to read controller widget state via `getSlider(name)`, `getJoystick(name, axis)`, `getButton(name)`.
 
 ## Grid (touch-first)
 - Virtual grid: **32x32 px**.
@@ -103,7 +103,7 @@ Controller widgets should publish their state to an in-memory store (similar to 
 Routines read those values via blocks:
 - `get slider [name]`
 - `get joystick [name] [x|y]`
-- `get switch [name]`
+- `get button [name]`
 
 Important:
 - Controller state is runtime-only RAM state.

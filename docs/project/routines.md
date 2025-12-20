@@ -132,7 +132,7 @@ Variables dialog rules:
 - `battery charging?` (`jimu_battery_charging`) returns a boolean.
 - `get slider [name]` (`jimu_get_slider`) returns a number (placeholder until Controller widgets exist).
 - `get joystick [name] [x|y]` (`jimu_get_joystick`) returns a number (placeholder until Controller widgets exist).
-- `get switch [name]` (`jimu_get_switch`) returns a boolean (placeholder until Controller widgets exist).
+- `get button [name]` (`jimu_get_button`) returns a boolean (Controller Button widget state).
 
 ### Movement
 - `set servo position` (`jimu_set_servo_timed`)

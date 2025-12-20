@@ -257,7 +257,9 @@ export class Jimu extends EventEmitter {
       await this._send(p);
       await sleep(150);
     }
-    await this.refreshStatus();
+    // Some firmware variants are slower to emit the first status frame after connect.
+    // Use a longer timeout for the initial status request.
+    await this.refreshStatus({ timeoutMs: 4000 });
     await this.enableDetected();
     await this.requestBattery();
   }
@@ -376,8 +378,9 @@ export class Jimu extends EventEmitter {
   }
 
   // ----------------- Public API -----------------
-  async refreshStatus() {
-    const pending = this._waitForStatus(1500);
+  async refreshStatus({ timeoutMs } = {}) {
+    const t = Number(timeoutMs ?? (this.state.status08 ? 1500 : 4000));
+    const pending = this._waitForStatus(Number.isFinite(t) ? t : 1500);
     await this._send([0x08, 0x00], { blockUntil: pending });
     return this.state.status08;
   }

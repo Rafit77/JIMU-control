@@ -1,6 +1,6 @@
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import * as Blockly from 'blockly';
-import { createWorkspace, setIdOptionsProvider, workspaceToAsyncJs, workspaceToXmlText } from './blockly_mvp.js';
+import { createWorkspace, setControllerWidgetOptionsProvider, setIdOptionsProvider, workspaceToAsyncJs, workspaceToXmlText } from './blockly_mvp.js';
 import { batteryPercentFromVolts } from '../battery.js';
 import * as globalVars from './global_vars.js';
 import * as controllerState from '../controller/controller_state.js';
@@ -257,7 +257,19 @@ const VariablesDialog = ({ open, workspace, getVarValue, isVarUsedElsewhere, onC
 };
 
 const RoutinesTab = forwardRef(function RoutinesTab(
-  { ipc, projectId, status, selectedBrickId, connectToSelectedBrick, calibration, projectModules, battery, addLog },
+  {
+    ipc,
+    projectId,
+    status,
+    selectedBrickId,
+    connectToSelectedBrick,
+    calibration,
+    projectModules,
+    controllerData,
+    routineXmlRamCacheRef,
+    battery,
+    addLog,
+  },
   ref,
 ) {
   const [routines, setRoutines] = useState([]);
@@ -278,7 +290,8 @@ const RoutinesTab = forwardRef(function RoutinesTab(
   const workspaceRef = useRef(null);
   const hostRef = useRef(null);
   const cancelRef = useRef({ cancel: () => {} });
-  const routineXmlCacheRef = useRef(new Map()); // routineId -> xml (RAM-only until project save)
+  const localRoutineXmlCacheRef = useRef(new Map());
+  const routineXmlCacheRef = routineXmlRamCacheRef || localRoutineXmlCacheRef; // routineId -> xml (RAM-only until project save)
   const editorInitialXmlRef = useRef(''); // xml used for workspace initialization (avoids async setState ordering issues)
   const suppressDirtyRef = useRef(false);
 
@@ -305,8 +318,11 @@ const RoutinesTab = forwardRef(function RoutinesTab(
   }, [ipc, projectId]);
 
   useEffect(() => {
+    // Only clear the *local* cache on project change.
+    // If a shared cache is provided by App, App owns its lifecycle (and tab switches must not wipe it).
+    if (routineXmlRamCacheRef) return;
     routineXmlCacheRef.current.clear();
-  }, [projectId]);
+  }, [projectId, routineXmlRamCacheRef]);
 
   useEffect(() => {
     refreshList().catch(() => {});
@@ -388,6 +404,29 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     });
     return () => setIdOptionsProvider(null);
   }, [projectModules, calibration]);
+
+  useEffect(() => {
+    const widgets = Array.isArray(controllerData?.widgets) ? controllerData.widgets : [];
+    const namesByKind = {
+      slider: [],
+      joystick: [],
+      button: [],
+      led: [],
+      display: [],
+    };
+    for (const w of widgets) {
+      const type = String(w?.type || '');
+      const name = String(w?.name || '').trim();
+      if (!name) continue;
+      if (type === 'slider') namesByKind.slider.push(name);
+      if (type === 'joystick') namesByKind.joystick.push(name);
+      if (type === 'button') namesByKind.button.push(name);
+      if (type === 'led') namesByKind.led.push(name);
+      if (type === 'display') namesByKind.display.push(name);
+    }
+    setControllerWidgetOptionsProvider((kind) => namesByKind[String(kind || '')] || []);
+    return () => setControllerWidgetOptionsProvider(null);
+  }, [controllerData]);
 
   const loadRoutine = useCallback(
     async (routine) => {
@@ -865,9 +904,8 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     const getJoystick = (name, axis) => {
       return controllerState.joystickGetAxis(String(name ?? ''), String(axis ?? 'x') === 'y' ? 'y' : 'x');
     };
-    const getSwitch = (name) => {
-      return controllerState.switchGet(String(name ?? ''));
-    };
+    const getButton = (name) => controllerState.switchGet(String(name ?? ''));
+    const getSwitch = (name) => getButton(name); // back-compat
 
     const selectAction = (name) => {
       if (!warnedRef.action) {
@@ -1065,6 +1103,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       readServoDeg,
       getSlider,
       getJoystick,
+      getButton,
       getSwitch,
       selectAction,
       eyeColorMask,

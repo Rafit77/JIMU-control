@@ -37,6 +37,23 @@ const getIdOptions = (kind) => {
   return [['(none)', '0']];
 };
 
+let controllerWidgetOptionsProvider = null;
+export const setControllerWidgetOptionsProvider = (fn) => {
+  controllerWidgetOptionsProvider = typeof fn === 'function' ? fn : null;
+};
+const getControllerWidgetOptions = (kind) => {
+  try {
+    const res = controllerWidgetOptionsProvider ? controllerWidgetOptionsProvider(kind) : null;
+    const list = Array.isArray(res) ? res : [];
+    const clean = list.map((x) => String(x ?? '').trim()).filter(Boolean);
+    const uniq = Array.from(new Set(clean)).sort((a, b) => a.localeCompare(b));
+    if (uniq.length) return uniq.map((x) => [x, x]);
+  } catch (_) {
+    // ignore
+  }
+  return [['(none)', '']];
+};
+
 const getNumericIdOptions = (kind) =>
   getIdOptions(kind)
     .map(([, v]) => Number(v))
@@ -99,6 +116,15 @@ const defineBlocksOnce = (() => {
         tooltip: 'Write to routine trace output and Logs tab.',
       },
       {
+        type: 'jimu_log_text',
+        message0: 'log text %1',
+        args0: [{ type: 'field_input', name: 'TEXT', text: 'hello' }],
+        previousStatement: null,
+        nextStatement: null,
+        colour: 290,
+        tooltip: 'Write a literal text message to routine trace output and Logs tab.',
+      },
+      {
         type: 'jimu_emergency_stop',
         message0: 'emergency stop',
         previousStatement: null,
@@ -108,40 +134,6 @@ const defineBlocksOnce = (() => {
       },
       // NOTE: blocks with dynamic module ID dropdowns are defined below (not JSON).
       {
-        type: 'jimu_get_slider',
-        message0: 'get slider %1',
-        args0: [{ type: 'field_input', name: 'NAME', text: 'slider1' }],
-        output: 'Number',
-        colour: 60,
-        tooltip: 'Read a UI slider value by name (application input).',
-      },
-      {
-        type: 'jimu_get_joystick',
-        message0: 'get joystick %1 %2',
-        args0: [
-          { type: 'field_input', name: 'NAME', text: 'joy1' },
-          {
-            type: 'field_dropdown',
-            name: 'AXIS',
-            options: [
-              ['x', 'x'],
-              ['y', 'y'],
-            ],
-          },
-        ],
-        output: 'Number',
-        colour: 60,
-        tooltip: 'Read a UI joystick axis value by name (application input).',
-      },
-      {
-        type: 'jimu_get_switch',
-        message0: 'get switch %1',
-        args0: [{ type: 'field_input', name: 'NAME', text: 'switch1' }],
-        output: 'Boolean',
-        colour: 60,
-        tooltip: 'Read a UI switch value by name (application input).',
-      },
-      {
         type: 'jimu_select_action',
         message0: 'select action %1',
         args0: [{ type: 'field_input', name: 'NAME', text: 'wave' }],
@@ -150,33 +142,10 @@ const defineBlocksOnce = (() => {
         colour: 210,
         tooltip: 'Placeholder: select an Action for later playback integration.',
       },
-      {
-        type: 'jimu_indicator_color',
-        message0: 'indicator %1 color %2',
-        args0: [
-          { type: 'field_input', name: 'NAME', text: 'status' },
-          { type: 'field_colour', name: 'HEX', colour: '#00ff00' },
-        ],
-        previousStatement: null,
-        nextStatement: null,
-        colour: 110,
-        tooltip: 'Controller: set a named indicator color (placeholder).',
-      },
-      {
-        type: 'jimu_display_show',
-        message0: 'display %1 show %2',
-        args0: [
-          { type: 'field_input', name: 'NAME', text: 'label1' },
-          { type: 'input_value', name: 'VALUE' },
-        ],
-        previousStatement: null,
-        nextStatement: null,
-        colour: 110,
-        tooltip: 'Controller: show a value on a named display widget (placeholder).',
-      },
     ]);
 
     const makeIdDropdown = (kind) => new Blockly.FieldDropdown(() => getIdOptions(kind));
+    const makeControllerDropdown = (kind) => new Blockly.FieldDropdown(() => getControllerWidgetOptions(kind));
     const appendEyesMaskInput = (block) => {
       const ids = getNumericIdOptions('eyes');
       const row = block.appendDummyInput().appendField('eyes');
@@ -189,6 +158,71 @@ const defineBlocksOnce = (() => {
         row.appendField(String(id));
         row.appendField(new Blockly.FieldLabelSerializable(' '));
       });
+    };
+
+    // Controller widgets (dropdowns from controller design).
+    Blockly.Blocks.jimu_get_slider = {
+      init() {
+        this.appendDummyInput().appendField('get slider').appendField(makeControllerDropdown('slider'), 'NAME');
+        this.setOutput(true, 'Number');
+        this.setColour(60);
+        this.setTooltip('Controller: read a slider value.');
+      },
+    };
+
+    Blockly.Blocks.jimu_get_joystick = {
+      init() {
+        this.appendDummyInput()
+          .appendField('get joystick')
+          .appendField(makeControllerDropdown('joystick'), 'NAME')
+          .appendField(new Blockly.FieldDropdown([['x', 'x'], ['y', 'y']]), 'AXIS');
+        this.setOutput(true, 'Number');
+        this.setColour(60);
+        this.setTooltip('Controller: read a joystick axis value.');
+      },
+    };
+
+    Blockly.Blocks.jimu_get_button = {
+      init() {
+        this.appendDummyInput().appendField('get button').appendField(makeControllerDropdown('button'), 'NAME');
+        this.setOutput(true, 'Boolean');
+        this.setColour(60);
+        this.setTooltip('Controller: read a button value.');
+      },
+    };
+
+    // Back-compat: old type name.
+    Blockly.Blocks.jimu_get_switch = {
+      init() {
+        this.appendDummyInput().appendField('get button').appendField(makeControllerDropdown('button'), 'NAME');
+        this.setOutput(true, 'Boolean');
+        this.setColour(60);
+        this.setTooltip('Controller: read a button value.');
+      },
+    };
+
+    Blockly.Blocks.jimu_indicator_color = {
+      init() {
+        this.appendDummyInput()
+          .appendField('indicator')
+          .appendField(makeControllerDropdown('led'), 'NAME')
+          .appendField('color')
+          .appendField(new Blockly.FieldColour('#00ff00'), 'HEX');
+        this.setPreviousStatement(true);
+        this.setNextStatement(true);
+        this.setColour(110);
+        this.setTooltip('Controller: set indicator color.');
+      },
+    };
+
+    Blockly.Blocks.jimu_display_show = {
+      init() {
+        this.appendValueInput('VALUE').appendField('display').appendField(makeControllerDropdown('display'), 'NAME').appendField('show');
+        this.setPreviousStatement(true);
+        this.setNextStatement(true);
+        this.setColour(110);
+        this.setTooltip('Controller: show a value on a display widget.');
+      },
     };
 
     // Multi-servo positional move (mutator-based, like lists_create_with).
@@ -1102,6 +1136,10 @@ const defineBlocksOnce = (() => {
       const t = javascriptGenerator.valueToCode(block, 'TEXT', javascriptGenerator.ORDER_NONE) || "''";
       return `api.log(${t});\n`;
     };
+    javascriptGenerator.forBlock.jimu_log_text = (block) => {
+      const t = String(block.getFieldValue('TEXT') || '');
+      return `api.log(${JSON.stringify(t)});\n`;
+    };
     javascriptGenerator.forBlock.jimu_print = (block) => {
       const v = javascriptGenerator.valueToCode(block, 'VALUE', javascriptGenerator.ORDER_NONE) || '0';
       return `await api.print(${JSON.stringify(block.id)}, ${v});\n`;
@@ -1202,9 +1240,13 @@ const defineBlocksOnce = (() => {
       const axis = String(block.getFieldValue('AXIS') || 'x');
       return [`api.getJoystick(${JSON.stringify(name)}, ${JSON.stringify(axis)})`, javascriptGenerator.ORDER_NONE];
     };
+    javascriptGenerator.forBlock.jimu_get_button = (block) => {
+      const name = String(block.getFieldValue('NAME') || '');
+      return [`api.getButton(${JSON.stringify(name)})`, javascriptGenerator.ORDER_NONE];
+    };
     javascriptGenerator.forBlock.jimu_get_switch = (block) => {
       const name = String(block.getFieldValue('NAME') || '');
-      return [`api.getSwitch(${JSON.stringify(name)})`, javascriptGenerator.ORDER_NONE];
+      return [`api.getButton(${JSON.stringify(name)})`, javascriptGenerator.ORDER_NONE];
     };
     javascriptGenerator.forBlock.jimu_select_action = (block) => {
       const name = String(block.getFieldValue('NAME') || '');
@@ -1369,7 +1411,7 @@ export const getBlocklyToolbox = () => {
           { kind: 'block', type: 'jimu_battery_charging' },
           { kind: 'block', type: 'jimu_get_slider' },
           { kind: 'block', type: 'jimu_get_joystick' },
-          { kind: 'block', type: 'jimu_get_switch' },
+          { kind: 'block', type: 'jimu_get_button' },
         ],
       },
       {
@@ -1424,6 +1466,7 @@ export const getBlocklyToolbox = () => {
         contents: [
           { kind: 'block', type: 'jimu_print', inputs: { VALUE: { shadow: { type: 'math_number', fields: { NUM: 0 } } } } },
           { kind: 'block', type: 'jimu_log' },
+          { kind: 'block', type: 'jimu_log_text' },
         ],
       },
     ],

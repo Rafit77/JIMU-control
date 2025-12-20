@@ -17,8 +17,8 @@ const Section = ({ title, children, style }) => (
 
 const PlaceholderList = ({ items }) => (
   <ul style={{ margin: 0, paddingLeft: 18 }}>
-    {items.map((item) => (
-      <li key={item}>{item}</li>
+    {items.map((item, idx) => (
+      <li key={`${idx}-${String(item)}`}>{item}</li>
     ))}
   </ul>
 );
@@ -267,6 +267,7 @@ export default function App() {
   const eyeAnimCancelRef = useRef(null);
   const routinesRef = useRef(null);
   const controllerRef = useRef(null);
+  const routineXmlRamCacheRef = useRef(new Map()); // routineId -> xml (RAM-only, per current project)
 
   const addLog = useCallback((msg) => {
     setLog((prev) => [`${new Date().toLocaleTimeString()} ${msg}`, ...prev].slice(0, 200));
@@ -307,6 +308,10 @@ export default function App() {
     } catch (_) {
       // ignore
     }
+  }, [currentProject?.id]);
+
+  useEffect(() => {
+    routineXmlRamCacheRef.current.clear();
   }, [currentProject?.id]);
 
   useEffect(() => {
@@ -2410,6 +2415,8 @@ export default function App() {
                 connectToSelectedBrick={handleConnect}
                 calibration={currentProject?.data?.calibration || {}}
                 projectModules={currentProject?.data?.hardware?.modules || {}}
+                controllerData={currentProject?.data?.controller || { widgets: [] }}
+                routineXmlRamCacheRef={routineXmlRamCacheRef}
                 battery={battery}
                 addLog={addLog}
               />
@@ -2428,6 +2435,7 @@ export default function App() {
                 battery={battery}
                 routines={currentProject?.data?.routines || []}
                 controllerData={currentProject?.data?.controller || { widgets: [] }}
+                routineXmlRamCacheRef={routineXmlRamCacheRef}
                 onUpdateControllerData={(updater) => {
                   updateCurrentProjectData((d) => {
                     const prev = d?.controller || { widgets: [] };

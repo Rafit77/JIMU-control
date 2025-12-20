@@ -4,7 +4,7 @@ import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 
 import * as controllerState from './controller_state.js';
-import { xmlTextToAsyncJs } from '../routines/blockly_mvp.js';
+import { setControllerWidgetOptionsProvider, setIdOptionsProvider, xmlTextToAsyncJs } from '../routines/blockly_mvp.js';
 import { createRoutineApi } from '../routines/runtime_api.js';
 
 const GRID_PX = 40;
@@ -124,21 +124,41 @@ const defaultWidget = (type, widgets) => {
 };
 
 const WidgetConfig = ({ open, widget, routines, onClose, onChange, onDelete }) => {
-  if (!open || !widget) return null;
-  const routineOptions = [{ id: '', name: '(none)' }, ...(Array.isArray(routines) ? routines : [])];
+  const widgetRef = useRef(widget);
+  useEffect(() => {
+    widgetRef.current = widget;
+  }, [widget]);
 
-  const setField = (path, value, mutator) => {
-    const next = JSON.parse(JSON.stringify(widget));
-    let cur = next;
-    for (let i = 0; i < path.length - 1; i += 1) cur = cur[path[i]];
-    cur[path[path.length - 1]] = value;
-    mutator?.(next);
-    onChange(next);
-  };
+  const routineOptions = useMemo(
+    () => [{ id: '', name: '(none)' }, ...(Array.isArray(routines) ? routines : [])],
+    [routines],
+  );
+
+  const setField = useCallback(
+    (path, value, mutator) => {
+      const current = widgetRef.current;
+      if (!current) return;
+      const next = JSON.parse(JSON.stringify(current));
+      let cur = next;
+      for (let i = 0; i < path.length - 1; i += 1) cur = cur[path[i]];
+      cur[path[path.length - 1]] = value;
+      mutator?.(next);
+      onChange(next);
+    },
+    [onChange],
+  );
 
   const [captureKey, setCaptureKey] = useState(false);
   const [captureGamepad, setCaptureGamepad] = useState(false);
   const [captureJoystickAxes, setCaptureJoystickAxes] = useState(false);
+
+  useEffect(() => {
+    if (!open || !widget) {
+      setCaptureKey(false);
+      setCaptureGamepad(false);
+      setCaptureJoystickAxes(false);
+    }
+  }, [open, widget]);
 
   useEffect(() => {
     setCaptureKey(false);
@@ -344,6 +364,8 @@ const WidgetConfig = ({ open, widget, routines, onClose, onChange, onDelete }) =
       window.removeEventListener('keydown', onEsc, true);
     };
   }, [captureJoystickAxes, setField]);
+
+  if (!open || !widget) return null;
 
   return (
     <div
@@ -815,7 +837,19 @@ const JoystickWidget = ({ name, onChange, runMode }) => {
 };
 
 const ControllerTab = forwardRef(function ControllerTab(
-  { ipc, projectId, status, calibration, projectModules, battery, routines, controllerData, onUpdateControllerData, addLog },
+  {
+    ipc,
+    projectId,
+    status,
+    calibration,
+    projectModules,
+    battery,
+    routines,
+    controllerData,
+    routineXmlRamCacheRef,
+    onUpdateControllerData,
+    addLog,
+  },
   ref,
 ) {
   const widgets = Array.isArray(controllerData?.widgets) ? controllerData.widgets : [];
@@ -847,6 +881,67 @@ const ControllerTab = forwardRef(function ControllerTab(
   const updateWidgets = useCallback((nextWidgets) => {
     onUpdateControllerData?.((prev) => ({ ...(prev || {}), widgets: nextWidgets }));
   }, [onUpdateControllerData]);
+
+  useEffect(() => {
+    const namesByKind = {
+      slider: [],
+      joystick: [],
+      button: [],
+      led: [],
+      display: [],
+    };
+    for (const w of widgets) {
+      const type = String(w?.type || '');
+      const name = String(w?.name || '').trim();
+      if (!name) continue;
+      if (type === 'slider') namesByKind.slider.push(name);
+      if (type === 'joystick') namesByKind.joystick.push(name);
+      if (type === 'button') namesByKind.button.push(name);
+      if (type === 'led') namesByKind.led.push(name);
+      if (type === 'display') namesByKind.display.push(name);
+    }
+    setControllerWidgetOptionsProvider((kind) => namesByKind[String(kind || '')] || []);
+    return () => setControllerWidgetOptionsProvider(null);
+  }, [widgets]);
+
+  useEffect(() => {
+    const modules = projectModules || {};
+    const servos = Array.isArray(modules.servos) ? modules.servos.map(Number).filter((n) => Number.isFinite(n)) : [];
+    const motors = Array.isArray(modules.motors) ? modules.motors.map(Number).filter((n) => Number.isFinite(n)) : [];
+    const ir = Array.isArray(modules.ir) ? modules.ir.map(Number).filter((n) => Number.isFinite(n)) : [];
+    const ultrasonic = Array.isArray(modules.ultrasonic)
+      ? modules.ultrasonic.map(Number).filter((n) => Number.isFinite(n))
+      : [];
+    const eyes = Array.isArray(modules.eyes) ? modules.eyes.map(Number).filter((n) => Number.isFinite(n)) : [];
+
+    const cfg = calibration || {};
+    const servoConfig = cfg.servoConfig || {};
+    const servoMode = (id) => {
+      const c = servoConfig?.[id] || servoConfig?.[String(id)] || null;
+      return String(c?.mode || 'servo');
+    };
+    const servoAny = servos;
+    const servoPosition = servos.filter((id) => {
+      const m = servoMode(id);
+      return m === 'servo' || m === 'mixed' || !m;
+    });
+    const servoRotate = servos.filter((id) => {
+      const m = servoMode(id);
+      return m === 'motor' || m === 'mixed';
+    });
+
+    setIdOptionsProvider((kind) => {
+      if (kind === 'eyes') return eyes;
+      if (kind === 'ultrasonic') return ultrasonic;
+      if (kind === 'ir') return ir;
+      if (kind === 'motor') return motors;
+      if (kind === 'servoAny') return servoAny;
+      if (kind === 'servoPosition') return servoPosition;
+      if (kind === 'servoRotate') return servoRotate;
+      return [];
+    });
+    return () => setIdOptionsProvider(null);
+  }, [projectModules, calibration]);
 
   // One-time migrations for older controller data.
   useEffect(() => {
@@ -908,8 +1003,21 @@ const ControllerTab = forwardRef(function ControllerTab(
       runningRef.current.set(rid, { cancelRef });
 
       try {
-        const res = await ipc.invoke('routine:loadXml', { projectId, routineId: rid });
-        const xml = String(res?.xml || '');
+        let xml = '';
+        try {
+          xml = String(routineXmlRamCacheRef?.current?.get(rid) ?? '');
+        } catch (_) {
+          xml = '';
+        }
+        if (!xml) {
+          const res = await ipc.invoke('routine:loadXml', { projectId, routineId: rid });
+          xml = String(res?.xml || '');
+          try {
+            routineXmlRamCacheRef?.current?.set?.(rid, xml);
+          } catch (_) {
+            // ignore
+          }
+        }
         const src = xmlTextToAsyncJs(xml, { debug: true });
         // eslint-disable-next-line no-new-func
         const fn = new Function('api', src);
@@ -918,7 +1026,9 @@ const ControllerTab = forwardRef(function ControllerTab(
           calibration,
           projectModules,
           battery,
-          addLog,
+          // Important: don't pass addLog here, otherwise api.log() writes twice:
+          // once via appendTrace and once via addLog.
+          addLog: null,
           appendTrace: (t) => addLog?.(`[Controller] ${String(t ?? '')}`),
           cancelRef,
           getWorkspace: () => null,
@@ -931,7 +1041,7 @@ const ControllerTab = forwardRef(function ControllerTab(
         runningRef.current.delete(rid);
       }
     },
-    [ipc, projectId, calibration, projectModules, battery, addLog],
+    [ipc, projectId, calibration, projectModules, battery, addLog, routineXmlRamCacheRef],
   );
 
   useImperativeHandle(
