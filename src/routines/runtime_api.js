@@ -217,16 +217,20 @@ export const createRoutineApi = ({
 
   const readIR = async (id) => {
     if (!ipc) throw new Error('IPC unavailable');
-    const r = await ipc.invoke('jimu:readSensorIR', { id: Number(id ?? 1) });
-    return Number(r?.raw ?? 0);
+    if (isCancelled()) return 0;
+    const res = await ipc.invoke('jimu:readSensorIR', Number(id ?? 1));
+    if (res?.error) throw new Error(res.message || 'IR read failed');
+    return Number(res?.value ?? 0);
   };
 
   const readUltrasonicCm = async (id) => {
     if (!ipc) throw new Error('IPC unavailable');
-    const r = await ipc.invoke('jimu:readSensorUS', { id: Number(id ?? 1) });
-    const raw = Number(r?.raw ?? 0);
+    if (isCancelled()) return 0;
+    const res = await ipc.invoke('jimu:readSensorUS', Number(id ?? 1));
+    if (res?.error) throw new Error(res.message || 'US read failed');
+    const raw = Number(res?.value ?? 0);
     if (!raw) return 301.0;
-    return Number(r?.cm ?? 0);
+    return raw / 10;
   };
 
   const readServoDeg = async (id) => {

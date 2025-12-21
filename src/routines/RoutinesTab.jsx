@@ -974,6 +974,8 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       const res = await ipc.invoke('jimu:readSensorUS', Number(id ?? 1));
       if (res?.error) throw new Error(res.message || 'US read failed');
       if (typeof res?.cm === 'number') return res.cm;
+      // SDK returns { value, raw: [...] } for 0x7E readings.
+      if (typeof res?.value === 'number') return res.value === 0 ? 301.0 : Number(res.value) / 10;
       if (typeof res?.raw === 'number') return res.raw === 0 ? 301.0 : Number(res.raw);
       return 0;
     };
