@@ -54,6 +54,25 @@ const getControllerWidgetOptions = (kind) => {
   return [['(none)', '']];
 };
 
+let routineOptionsProvider = null;
+export const setRoutineOptionsProvider = (fn) => {
+  routineOptionsProvider = typeof fn === 'function' ? fn : null;
+};
+const getRoutineOptions = () => {
+  try {
+    const res = routineOptionsProvider ? routineOptionsProvider() : null;
+    const list = Array.isArray(res) ? res : [];
+    const options = list
+      .map((r) => ({ id: String(r?.id || ''), name: String(r?.name || '').trim() }))
+      .filter((r) => r.id && r.name)
+      .sort((a, b) => a.name.localeCompare(b.name));
+    if (options.length) return options.map((r) => [r.name, r.id]);
+  } catch (_) {
+    // ignore
+  }
+  return [['(none)', '']];
+};
+
 const getNumericIdOptions = (kind) =>
   getIdOptions(kind)
     .map(([, v]) => Number(v))
@@ -146,6 +165,7 @@ const defineBlocksOnce = (() => {
 
     const makeIdDropdown = (kind) => new Blockly.FieldDropdown(() => getIdOptions(kind));
     const makeControllerDropdown = (kind) => new Blockly.FieldDropdown(() => getControllerWidgetOptions(kind));
+    const makeRoutineDropdown = () => new Blockly.FieldDropdown(() => getRoutineOptions());
     const appendEyesMaskInput = (block) => {
       const ids = getNumericIdOptions('eyes');
       const row = block.appendDummyInput().appendField('eyes');
@@ -1115,6 +1135,15 @@ const defineBlocksOnce = (() => {
         this.setTooltip('Turn off ultrasonic LED.');
       },
     };
+    Blockly.Blocks.jimu_routine = {
+      init() {
+        this.appendDummyInput().appendField('routine').appendField(makeRoutineDropdown(), 'RID');
+        this.setPreviousStatement(true);
+        this.setNextStatement(true);
+        this.setColour('#ff6d00');
+        this.setTooltip('Run another routine as a subroutine/procedure.');
+      },
+    };
     Blockly.Blocks.jimu_print = {
       init() {
         this.appendDummyInput().appendField('Print').appendField(new Blockly.FieldLabelSerializable(''), 'OUT');
@@ -1133,6 +1162,11 @@ const defineBlocksOnce = (() => {
     javascriptGenerator.forBlock.jimu_wait_until = (block) => {
       const cond = javascriptGenerator.valueToCode(block, 'COND', javascriptGenerator.ORDER_NONE) || 'false';
       return `while (!(${cond})) { await api.wait(50); }\n`;
+    };
+    javascriptGenerator.forBlock.jimu_routine = (block) => {
+      const rid = String(block.getFieldValue('RID') || '');
+      if (!rid) return '';
+      return `await api.routine(${JSON.stringify(rid)});\n`;
     };
     javascriptGenerator.forBlock.jimu_log = (block) => {
       const t = javascriptGenerator.valueToCode(block, 'TEXT', javascriptGenerator.ORDER_NONE) || "''";
@@ -1353,6 +1387,7 @@ export const getBlocklyToolbox = () => {
           },
           { kind: 'block', type: 'controls_whileUntil', inputs: { BOOL: { shadow: { type: 'logic_boolean', fields: { BOOL: 'FALSE' } } } } },
           { kind: 'block', type: 'controls_flow_statements' },
+          { kind: 'block', type: 'jimu_routine' },
           { kind: 'block', type: 'jimu_wait', inputs: { MS: { shadow: { type: 'math_number', fields: { NUM: 500 } } } } },
           {
             kind: 'block',

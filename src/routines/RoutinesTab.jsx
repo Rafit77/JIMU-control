@@ -1,6 +1,14 @@
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import * as Blockly from 'blockly';
-import { createWorkspace, setControllerWidgetOptionsProvider, setIdOptionsProvider, workspaceToAsyncJs, workspaceToXmlText } from './blockly_mvp.js';
+import {
+  createWorkspace,
+  setControllerWidgetOptionsProvider,
+  setIdOptionsProvider,
+  setRoutineOptionsProvider,
+  workspaceToAsyncJs,
+  workspaceToXmlText,
+  xmlTextToAsyncJs,
+} from './blockly_mvp.js';
 import { batteryPercentFromVolts } from '../battery.js';
 import * as globalVars from './global_vars.js';
 import * as controllerState from '../controller/controller_state.js';
@@ -518,6 +526,11 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     setControllerWidgetOptionsProvider((kind) => namesByKind[String(kind || '')] || []);
     return () => setControllerWidgetOptionsProvider(null);
   }, [controllerData]);
+
+  useEffect(() => {
+    setRoutineOptionsProvider(() => (Array.isArray(routines) ? routines : []));
+    return () => setRoutineOptionsProvider(null);
+  }, [routines]);
 
   const loadRoutine = useCallback(
     async (routine) => {
@@ -1156,7 +1169,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
 
     const batteryCharging = () => Boolean(battery?.charging);
 
-    return {
+    const api = {
       __step: async (blockId) => {
         const ws = workspaceRef.current;
         try {
@@ -1235,8 +1248,49 @@ const RoutinesTab = forwardRef(function RoutinesTab(
         appendTrace(t);
         addLog?.(`[Routine] ${String(t ?? '')}`);
       },
+      __routineStack: [],
+      routine: async (routineId) => {
+        const rid = String(routineId || '');
+        if (!rid) return;
+        if (isCancelled()) return;
+
+        const stack = Array.isArray(api.__routineStack) ? api.__routineStack : [];
+        if (stack.includes(rid)) throw new Error(`Recursive routine call: ${stack.join(' -> ')} -> ${rid}`);
+        if (stack.length >= 10) throw new Error('Routine call depth exceeded.');
+
+        stack.push(rid);
+        api.__routineStack = stack;
+        try {
+          let xml = '';
+          try {
+            xml = String(routineXmlCacheRef.current.get(rid) ?? '');
+          } catch (_) {
+            xml = '';
+          }
+          if (!xml && ipc && projectId) {
+            try {
+              const res = await ipc.invoke('routine:loadXml', { projectId, routineId: rid });
+              xml = String(res?.xml || '');
+              routineXmlCacheRef.current.set(rid, xml);
+            } catch (_) {
+              xml = '';
+            }
+          }
+          if (!xml) throw new Error(`Routine not found: ${rid}`);
+
+          // Run without debug stepping so we don't disturb current editor highlighting.
+          const src = xmlTextToAsyncJs(xml, { debug: false });
+          // eslint-disable-next-line no-new-func
+          const fn = new Function('api', src);
+          await fn(api);
+        } finally {
+          stack.pop();
+        }
+      },
     };
-  }, [ipc, calibration, projectModules, battery, addLog, stepDelayMs]);
+
+    return api;
+  }, [ipc, projectId, calibration, projectModules, battery, addLog, stepDelayMs]);
 
   const runRoutine = useCallback(async () => {
     if (!editorRoutine) return;
@@ -1278,6 +1332,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     };
 
     try {
+      api.__routineStack = [String(editorRoutine.id || '')].filter(Boolean);
       const src = workspaceToAsyncJs(ws, { debug: true });
       // eslint-disable-next-line no-new-func
       const fn = new Function('api', src);
@@ -1291,6 +1346,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
         setRunError(e?.message || String(e));
       }
     } finally {
+      api.__routineStack = [];
       try {
         ws.highlightBlock?.(null);
       } catch (_) {

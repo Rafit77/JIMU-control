@@ -4,7 +4,7 @@ import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 
 import * as controllerState from './controller_state.js';
-import { setControllerWidgetOptionsProvider, setIdOptionsProvider, xmlTextToAsyncJs } from '../routines/blockly_mvp.js';
+import { setControllerWidgetOptionsProvider, setIdOptionsProvider, setRoutineOptionsProvider, xmlTextToAsyncJs } from '../routines/blockly_mvp.js';
 import { createRoutineApi } from '../routines/runtime_api.js';
 import * as globalVars from '../routines/global_vars.js';
 
@@ -1272,6 +1272,44 @@ const ControllerTab = forwardRef(function ControllerTab(
           getWorkspace: () => null,
           stepDelayMs: 0,
         });
+        api.__routineStack = [rid];
+        api.routine = async (routineId) => {
+          const subId = String(routineId || '');
+          if (!subId) return;
+          if (cancelRef.current?.isCancelled) return;
+
+          const stack = Array.isArray(api.__routineStack) ? api.__routineStack : [];
+          if (stack.includes(subId)) throw new Error(`Recursive routine call: ${stack.join(' -> ')} -> ${subId}`);
+          if (stack.length >= 10) throw new Error('Routine call depth exceeded.');
+          stack.push(subId);
+          api.__routineStack = stack;
+
+          try {
+            let subXml = '';
+            try {
+              subXml = String(routineXmlRamCacheRef?.current?.get(subId) ?? '');
+            } catch (_) {
+              subXml = '';
+            }
+            if (!subXml) {
+              const res = await ipc.invoke('routine:loadXml', { projectId, routineId: subId });
+              subXml = String(res?.xml || '');
+              try {
+                routineXmlRamCacheRef?.current?.set?.(subId, subXml);
+              } catch (_) {
+                // ignore
+              }
+            }
+            if (!subXml) throw new Error(`Routine not found: ${subId}`);
+
+            const subSrc = xmlTextToAsyncJs(subXml, { debug: true });
+            // eslint-disable-next-line no-new-func
+            const subFn = new Function('api', subSrc);
+            await subFn(api);
+          } finally {
+            stack.pop();
+          }
+        };
         await fn(api);
       } catch (e) {
         addLog?.(`[Controller] Routine error: ${e?.message || String(e)}`);
@@ -1381,6 +1419,11 @@ const ControllerTab = forwardRef(function ControllerTab(
     });
     return () => setIdOptionsProvider(null);
   }, [projectModules, calibration]);
+
+  useEffect(() => {
+    setRoutineOptionsProvider(() => (Array.isArray(routines) ? routines : []));
+    return () => setRoutineOptionsProvider(null);
+  }, [routines]);
 
   // One-time migrations for older controller data.
   useEffect(() => {
