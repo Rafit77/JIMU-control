@@ -16,8 +16,11 @@ const ROUTINE_RETRIGGER_COOLDOWN_MS = 100;
 const TIMER_MIN_MS = 100;
 const TIMER_STEP_MS = 100;
 const TIMER_FLASH_MS = 50;
+const SLIDER_KEY_REPEAT_MS = 250;
 const BUTTON_MODE_MOMENTARY = 'momentary';
 const BUTTON_MODE_TOGGLE = 'toggle';
+const SLIDER_MODE_CENTER = 'center';
+const SLIDER_MODE_ZERO_LEFT = 'zeroLeft';
 const overlapNoCompactor = { ...noCompactor, allowOverlap: true };
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -108,7 +111,7 @@ const defaultWidget = (type, widgets) => {
     layout: { i: id, x: 0, y: getNextY(widgets), w, h },
     props:
       type === 'slider'
-        ? { orientation: 'h', min: 0, max: 100, step: 1, value: 0 }
+        ? { orientation: 'h', mode: SLIDER_MODE_ZERO_LEFT, range: 100, step: 1, value: 0, autoCenter: false }
         : type === 'button'
           ? { mode: BUTTON_MODE_MOMENTARY, value: false }
           : type === 'led'
@@ -119,8 +122,8 @@ const defaultWidget = (type, widgets) => {
     bindings:
       type === 'button'
         ? { onPress: '', onRelease: '', key: '', gamepad: { index: 0, button: -1 } }
-        : type === 'slider'
-          ? { onChange: '' }
+      : type === 'slider'
+          ? { onChange: '', keyUp: '', keyDown: '', gamepad: { index: 0, buttonUp: -1, buttonDown: -1 } }
           : type === 'joystick'
             ? { onChange: '', gamepad: { index: 0, axisX: -1, axisY: -1 } }
             : type === 'timer'
@@ -147,7 +150,11 @@ const WidgetConfig = ({ open, widget, routines, onClose, onChange, onDelete }) =
       if (!current) return;
       const next = JSON.parse(JSON.stringify(current));
       let cur = next;
-      for (let i = 0; i < path.length - 1; i += 1) cur = cur[path[i]];
+      for (let i = 0; i < path.length - 1; i += 1) {
+        const k = path[i];
+        if (cur[k] == null || typeof cur[k] !== 'object') cur[k] = {};
+        cur = cur[k];
+      }
       cur[path[path.length - 1]] = value;
       mutator?.(next);
       onChange(next);
@@ -156,7 +163,9 @@ const WidgetConfig = ({ open, widget, routines, onClose, onChange, onDelete }) =
   );
 
   const [captureKey, setCaptureKey] = useState(false);
+  const [captureKeyTarget, setCaptureKeyTarget] = useState('key'); // key | keyUp | keyDown
   const [captureGamepad, setCaptureGamepad] = useState(false);
+  const [captureGamepadTarget, setCaptureGamepadTarget] = useState('button'); // button | buttonUp | buttonDown
   const [captureJoystickAxes, setCaptureJoystickAxes] = useState(false);
 
   useEffect(() => {
@@ -173,13 +182,7 @@ const WidgetConfig = ({ open, widget, routines, onClose, onChange, onDelete }) =
     setCaptureJoystickAxes(false);
   }, [widget?.id]);
 
-  useEffect(() => {
-    if (!widget?.bindings?.key) setCaptureKey(false);
-  }, [widget?.bindings?.key]);
-
-  useEffect(() => {
-    if (Number(widget?.bindings?.gamepad?.button ?? -1) < 0) setCaptureGamepad(false);
-  }, [widget?.bindings?.gamepad?.button]);
+  // Note: do not auto-cancel capture when the current binding is empty; we're capturing a new value.
 
   useEffect(() => {
     const ax = Number(widget?.bindings?.gamepad?.axisX ?? -1);
@@ -198,12 +201,15 @@ const WidgetConfig = ({ open, widget, routines, onClose, onChange, onDelete }) =
       const code = String(e.code || '');
       if (!code) return;
       e.preventDefault();
-      setField(['bindings', 'key'], code);
+      const target = String(captureKeyTarget || 'key');
+      setField(['bindings', target], code, (next) => {
+        if (!next.bindings) next.bindings = {};
+      });
       setCaptureKey(false);
     };
     window.addEventListener('keydown', onDown, true);
     return () => window.removeEventListener('keydown', onDown, true);
-  }, [captureKey, setField]);
+  }, [captureKey, captureKeyTarget, setField]);
 
   useEffect(() => {
     if (!captureGamepad) return;
@@ -242,11 +248,12 @@ const WidgetConfig = ({ open, widget, routines, onClose, onChange, onDelete }) =
           if (!pressed) continue;
           const key = `${pi}:${bi}`;
           if (initialPressed.has(key)) continue;
+          const target = String(captureGamepadTarget || 'button');
           setField(['bindings', 'gamepad', 'index'], pi, (next) => {
             if (!next.bindings) next.bindings = {};
             if (!next.bindings.gamepad) next.bindings.gamepad = {};
             next.bindings.gamepad.index = pi;
-            next.bindings.gamepad.button = bi;
+            next.bindings.gamepad[target] = bi;
           });
           setCaptureGamepad(false);
           cancelled = true;
@@ -261,7 +268,7 @@ const WidgetConfig = ({ open, widget, routines, onClose, onChange, onDelete }) =
       clearInterval(t);
       window.removeEventListener('keydown', onEsc, true);
     };
-  }, [captureGamepad, setField]);
+  }, [captureGamepad, captureGamepadTarget, setField]);
 
   useEffect(() => {
     if (!captureJoystickAxes) return;
@@ -433,6 +440,7 @@ const WidgetConfig = ({ open, widget, routines, onClose, onChange, onDelete }) =
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
+                    setCaptureKeyTarget('key');
                     setCaptureKey((v) => !v);
                     setCaptureGamepad(false);
                     setCaptureJoystickAxes(false);
@@ -480,6 +488,7 @@ const WidgetConfig = ({ open, widget, routines, onClose, onChange, onDelete }) =
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
+                    setCaptureGamepadTarget('button');
                     setCaptureGamepad((v) => !v);
                     setCaptureKey(false);
                     setCaptureJoystickAxes(false);
@@ -551,6 +560,258 @@ const WidgetConfig = ({ open, widget, routines, onClose, onChange, onDelete }) =
                 <option value="h">Horizontal</option>
                 <option value="v">Vertical</option>
               </select>
+            </label>
+          ) : null}
+
+          {widget.type === 'slider' ? (
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              Mode
+              <select
+                value={widget.props?.mode === SLIDER_MODE_CENTER ? SLIDER_MODE_CENTER : SLIDER_MODE_ZERO_LEFT}
+                onChange={(e) => {
+                  const mode = e.target.value === SLIDER_MODE_CENTER ? SLIDER_MODE_CENTER : SLIDER_MODE_ZERO_LEFT;
+                  setField(['props', 'mode'], mode, (next) => {
+                    if (!next.props) next.props = {};
+                    const range = clamp(Math.round(Number(next.props.range ?? next.props.max ?? 100)), 1, 10_000);
+                    next.props.range = range;
+                    if (mode === SLIDER_MODE_CENTER) {
+                      next.props.value = clamp(Number(next.props.value ?? 0), -range, range);
+                    } else {
+                      next.props.value = clamp(Number(next.props.value ?? 0), 0, range);
+                    }
+                  });
+                }}
+                style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }}
+              >
+                <option value={SLIDER_MODE_CENTER}>0 in center (-range..0..+range)</option>
+                <option value={SLIDER_MODE_ZERO_LEFT}>0 on left (0..range)</option>
+              </select>
+              <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(widget.props?.autoCenter)}
+                  onChange={(e) => setField(['props', 'autoCenter'], Boolean(e.target.checked))}
+                />
+                <span style={{ fontSize: 12, color: '#555' }}>Auto center on release</span>
+              </label>
+            </label>
+          ) : null}
+
+          {widget.type === 'slider' ? (
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              Range (max)
+              <input
+                type="number"
+                value={Number(widget.props?.range ?? widget.props?.max ?? 100)}
+                min={1}
+                max={10_000}
+                step={1}
+                onChange={(e) => {
+                  const raw = Number(e.target.value);
+                  if (!Number.isFinite(raw)) return;
+                  const range = clamp(Math.round(raw), 1, 10_000);
+                  setField(['props', 'range'], range, (next) => {
+                    if (!next.props) next.props = {};
+                    const mode = next.props.mode === SLIDER_MODE_CENTER ? SLIDER_MODE_CENTER : SLIDER_MODE_ZERO_LEFT;
+                    if (mode === SLIDER_MODE_CENTER) next.props.value = clamp(Number(next.props.value ?? 0), -range, range);
+                    else next.props.value = clamp(Number(next.props.value ?? 0), 0, range);
+                  });
+                }}
+                style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }}
+              />
+            </label>
+          ) : null}
+
+          {widget.type === 'slider' ? (
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              Keyboard (optional)
+              <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 8, alignItems: 'center' }}>
+                <div style={{ fontSize: 12, color: '#555' }}>Up</div>
+                <div style={{ fontSize: 12, color: '#555' }}>
+                  {captureKey && captureKeyTarget === 'keyUp'
+                    ? 'Press any key (Up)… ESC cancels'
+                    : widget.bindings?.keyUp
+                      ? `Key: ${String(widget.bindings.keyUp)}`
+                      : 'Key: (none)'}
+                </div>
+                <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setCaptureKeyTarget('keyUp');
+                      setCaptureKey(true);
+                      setCaptureGamepad(false);
+                      setCaptureJoystickAxes(false);
+                    }}
+                    disabled={captureGamepad}
+                    style={{ padding: '8px 10px' }}
+                  >
+                    Set
+                  </button>
+                  {widget.bindings?.keyUp ? (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setCaptureKey(false);
+                        setField(['bindings', 'keyUp'], '');
+                      }}
+                      disabled={captureKey || captureGamepad}
+                      style={{ padding: '8px 10px' }}
+                    >
+                      Clear
+                    </button>
+                  ) : null}
+                </div>
+
+                <div style={{ fontSize: 12, color: '#555' }}>Down</div>
+                <div style={{ fontSize: 12, color: '#555' }}>
+                  {captureKey && captureKeyTarget === 'keyDown'
+                    ? 'Press any key (Down)… ESC cancels'
+                    : widget.bindings?.keyDown
+                      ? `Key: ${String(widget.bindings.keyDown)}`
+                      : 'Key: (none)'}
+                </div>
+                <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setCaptureKeyTarget('keyDown');
+                      setCaptureKey(true);
+                      setCaptureGamepad(false);
+                      setCaptureJoystickAxes(false);
+                    }}
+                    disabled={captureGamepad}
+                    style={{ padding: '8px 10px' }}
+                  >
+                    Set
+                  </button>
+                  {widget.bindings?.keyDown ? (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setCaptureKey(false);
+                        setField(['bindings', 'keyDown'], '');
+                      }}
+                      disabled={captureKey || captureGamepad}
+                      style={{ padding: '8px 10px' }}
+                    >
+                      Clear
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+              <div style={{ marginTop: 6, fontSize: 12, color: '#777' }}>
+                Step: ±1, repeat every {SLIDER_KEY_REPEAT_MS}ms while held.
+              </div>
+            </label>
+          ) : null}
+
+          {widget.type === 'slider' ? (
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              Gamepad buttons (optional)
+              <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 8, alignItems: 'center' }}>
+                <div style={{ fontSize: 12, color: '#555' }}>Up</div>
+                <div style={{ fontSize: 12, color: '#555' }}>
+                  {typeof navigator?.getGamepads !== 'function'
+                    ? 'Gamepad API not available'
+                    : captureGamepad && captureGamepadTarget === 'buttonUp'
+                      ? 'Press a gamepad button… ESC cancels'
+                      : Number(widget.bindings?.gamepad?.buttonUp ?? -1) >= 0
+                        ? `Pad ${Number(widget.bindings?.gamepad?.index ?? 0)} / Btn ${Number(widget.bindings?.gamepad?.buttonUp ?? -1)}`
+                        : 'Button: (none)'}
+                </div>
+                <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setCaptureGamepadTarget('buttonUp');
+                      setCaptureGamepad(true);
+                      setCaptureKey(false);
+                      setCaptureJoystickAxes(false);
+                    }}
+                    disabled={captureKey || typeof navigator?.getGamepads !== 'function'}
+                    style={{ padding: '8px 10px' }}
+                  >
+                    Learn
+                  </button>
+                  {Number(widget.bindings?.gamepad?.buttonUp ?? -1) >= 0 ? (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setCaptureGamepad(false);
+                        setField(['bindings', 'gamepad', 'buttonUp'], -1, (next) => {
+                          if (!next.bindings) next.bindings = {};
+                          if (!next.bindings.gamepad) next.bindings.gamepad = {};
+                          next.bindings.gamepad.buttonUp = -1;
+                        });
+                      }}
+                      disabled={captureKey || captureGamepad}
+                      style={{ padding: '8px 10px' }}
+                    >
+                      Clear
+                    </button>
+                  ) : null}
+                </div>
+
+                <div style={{ fontSize: 12, color: '#555' }}>Down</div>
+                <div style={{ fontSize: 12, color: '#555' }}>
+                  {typeof navigator?.getGamepads !== 'function'
+                    ? 'Gamepad API not available'
+                    : captureGamepad && captureGamepadTarget === 'buttonDown'
+                      ? 'Press a gamepad button… ESC cancels'
+                      : Number(widget.bindings?.gamepad?.buttonDown ?? -1) >= 0
+                        ? `Pad ${Number(widget.bindings?.gamepad?.index ?? 0)} / Btn ${Number(widget.bindings?.gamepad?.buttonDown ?? -1)}`
+                        : 'Button: (none)'}
+                </div>
+                <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setCaptureGamepadTarget('buttonDown');
+                      setCaptureGamepad(true);
+                      setCaptureKey(false);
+                      setCaptureJoystickAxes(false);
+                    }}
+                    disabled={captureKey || typeof navigator?.getGamepads !== 'function'}
+                    style={{ padding: '8px 10px' }}
+                  >
+                    Learn
+                  </button>
+                  {Number(widget.bindings?.gamepad?.buttonDown ?? -1) >= 0 ? (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setCaptureGamepad(false);
+                        setField(['bindings', 'gamepad', 'buttonDown'], -1, (next) => {
+                          if (!next.bindings) next.bindings = {};
+                          if (!next.bindings.gamepad) next.bindings.gamepad = {};
+                          next.bindings.gamepad.buttonDown = -1;
+                        });
+                      }}
+                      disabled={captureKey || captureGamepad}
+                      style={{ padding: '8px 10px' }}
+                    >
+                      Clear
+                    </button>
+                  ) : null}
+                </div>
+              </div>
             </label>
           ) : null}
 
@@ -887,6 +1148,8 @@ const ControllerTab = forwardRef(function ControllerTab(
   const prevJoyRef = useRef(new Map()); // widgetId -> {x,y}
   const buttonSourcesRef = useRef(new Map()); // widgetId -> { mouse, key, pad }
   const buttonEffectiveRef = useRef(new Map()); // widgetId -> bool (momentary effective pressed)
+  const sliderKeyRef = useRef(new Map()); // widgetId -> { up: bool, down: bool, timer: any }
+  const sliderPadRef = useRef(new Map()); // widgetId -> { up: bool, down: bool, lastAt: number }
   const timerFlashUntilRef = useRef(new Map()); // widgetId -> ts
   const [, bumpTimerFlash] = useState(0);
 
@@ -963,6 +1226,62 @@ const ControllerTab = forwardRef(function ControllerTab(
     return results;
   }, [ipc, projectId, routines, routineXmlRamCacheRef]);
 
+  const startRoutine = useCallback(
+    async (routineId) => {
+      const rid = String(routineId || '');
+      if (!rid) return;
+      if (runningRef.current.has(rid)) return;
+      const now = Date.now();
+      const last = Number(lastStartRef.current.get(rid) || 0);
+      if (now - last < ROUTINE_RETRIGGER_COOLDOWN_MS) return;
+      lastStartRef.current.set(rid, now);
+
+      if (!ipc || !projectId) return;
+      const cancelRef = { current: { isCancelled: false, onCancel: null } };
+      runningRef.current.set(rid, { cancelRef });
+
+      try {
+        let xml = '';
+        try {
+          xml = String(routineXmlRamCacheRef?.current?.get(rid) ?? '');
+        } catch (_) {
+          xml = '';
+        }
+        if (!xml) {
+          const res = await ipc.invoke('routine:loadXml', { projectId, routineId: rid });
+          xml = String(res?.xml || '');
+          try {
+            routineXmlRamCacheRef?.current?.set?.(rid, xml);
+          } catch (_) {
+            // ignore
+          }
+        }
+        const src = xmlTextToAsyncJs(xml, { debug: true });
+        // eslint-disable-next-line no-new-func
+        const fn = new Function('api', src);
+        const api = createRoutineApi({
+          ipc,
+          calibration,
+          projectModules,
+          battery,
+          // Important: don't pass addLog here, otherwise api.log() writes twice:
+          // once via appendTrace and once via addLog.
+          addLog: null,
+          appendTrace: (t) => addLog?.(`[Controller] ${String(t ?? '')}`),
+          cancelRef,
+          getWorkspace: () => null,
+          stepDelayMs: 0,
+        });
+        await fn(api);
+      } catch (e) {
+        addLog?.(`[Controller] Routine error: ${e?.message || String(e)}`);
+      } finally {
+        runningRef.current.delete(rid);
+      }
+    },
+    [ipc, projectId, calibration, projectModules, battery, addLog, routineXmlRamCacheRef],
+  );
+
   const setButtonUiValue = useCallback((widgetId, mode, value) => {
     const current = widgetsRef.current || [];
     const next = current.map((x) =>
@@ -971,6 +1290,28 @@ const ControllerTab = forwardRef(function ControllerTab(
     widgetsRef.current = next;
     updateWidgets(next);
   }, [updateWidgets]);
+
+  const setSliderUiValue = useCallback(
+    (widgetId, value, { trigger = true } = {}) => {
+      const current = widgetsRef.current || [];
+      const w = current.find((x) => String(x?.id) === String(widgetId));
+      if (!w || w.type !== 'slider') return;
+      const mode = w.props?.mode === SLIDER_MODE_CENTER ? SLIDER_MODE_CENTER : SLIDER_MODE_ZERO_LEFT;
+      const range = clamp(Math.round(Number(w.props?.range ?? 100)), 1, 10_000);
+      const min = mode === SLIDER_MODE_CENTER ? -range : 0;
+      const max = range;
+      const nextVal = clamp(Number(value ?? 0), min, max);
+      const next = current.map((x) => (x.id === widgetId ? { ...x, props: { ...(x.props || {}), value: nextVal } } : x));
+      widgetsRef.current = next;
+      controllerState.sliderSet(w.name, nextVal);
+      if (trigger) {
+        const rid = String(w.bindings?.onChange || '');
+        if (rid) startRoutine(rid).catch(() => {});
+      }
+      updateWidgets(next);
+    },
+    [updateWidgets, startRoutine],
+  );
 
   const flashTimer = useCallback((widgetId) => {
     const id = String(widgetId ?? '');
@@ -1086,62 +1427,6 @@ const ControllerTab = forwardRef(function ControllerTab(
     setConfigWidgetId('');
   }, [runMode]);
 
-  const startRoutine = useCallback(
-    async (routineId) => {
-      const rid = String(routineId || '');
-      if (!rid) return;
-      if (runningRef.current.has(rid)) return;
-      const now = Date.now();
-      const last = Number(lastStartRef.current.get(rid) || 0);
-      if (now - last < ROUTINE_RETRIGGER_COOLDOWN_MS) return;
-      lastStartRef.current.set(rid, now);
-
-      if (!ipc || !projectId) return;
-      const cancelRef = { current: { isCancelled: false, onCancel: null } };
-      runningRef.current.set(rid, { cancelRef });
-
-      try {
-        let xml = '';
-        try {
-          xml = String(routineXmlRamCacheRef?.current?.get(rid) ?? '');
-        } catch (_) {
-          xml = '';
-        }
-        if (!xml) {
-          const res = await ipc.invoke('routine:loadXml', { projectId, routineId: rid });
-          xml = String(res?.xml || '');
-          try {
-            routineXmlRamCacheRef?.current?.set?.(rid, xml);
-          } catch (_) {
-            // ignore
-          }
-        }
-        const src = xmlTextToAsyncJs(xml, { debug: true });
-        // eslint-disable-next-line no-new-func
-        const fn = new Function('api', src);
-        const api = createRoutineApi({
-          ipc,
-          calibration,
-          projectModules,
-          battery,
-          // Important: don't pass addLog here, otherwise api.log() writes twice:
-          // once via appendTrace and once via addLog.
-          addLog: null,
-          appendTrace: (t) => addLog?.(`[Controller] ${String(t ?? '')}`),
-          cancelRef,
-          getWorkspace: () => null,
-          stepDelayMs: 0,
-        });
-        await fn(api);
-      } catch (e) {
-        addLog?.(`[Controller] Routine error: ${e?.message || String(e)}`);
-      } finally {
-        runningRef.current.delete(rid);
-      }
-    },
-    [ipc, projectId, calibration, projectModules, battery, addLog, routineXmlRamCacheRef],
-  );
-
   useImperativeHandle(
     ref,
     () => ({
@@ -1206,6 +1491,15 @@ const ControllerTab = forwardRef(function ControllerTab(
     buttonEffectiveRef.current.clear();
     prevButtonsRef.current.clear();
     prevJoyRef.current.clear();
+    sliderKeyRef.current.forEach((s) => {
+      try {
+        if (s?.timer) clearInterval(s.timer);
+      } catch (_) {
+        // ignore
+      }
+    });
+    sliderKeyRef.current.clear();
+    sliderPadRef.current.clear();
   }, [runMode]);
 
   const setMomentaryButtonSource = useCallback((widgetId, source, isPressed) => {
@@ -1241,7 +1535,7 @@ const ControllerTab = forwardRef(function ControllerTab(
     setButtonUiValue(w.id, mode, effective);
   }, [setButtonUiValue, startRoutine]);
 
-  // Keyboard triggers (buttons only, for now)
+  // Keyboard triggers (buttons + sliders)
   useEffect(() => {
     if (!runMode) return;
     const onDown = (e) => {
@@ -1265,6 +1559,34 @@ const ControllerTab = forwardRef(function ControllerTab(
           }
         }
       }
+      for (const w of ws) {
+        if (w.type !== 'slider') continue;
+        const up = String(w.bindings?.keyUp || '');
+        const down = String(w.bindings?.keyDown || '');
+        if (!up && !down) continue;
+        if (code !== up && code !== down) continue;
+        e.preventDefault();
+
+        const key = String(w.id);
+        const state = sliderKeyRef.current.get(key) || { up: false, down: false, timer: null };
+        if (code === up) state.up = true;
+        if (code === down) state.down = true;
+        sliderKeyRef.current.set(key, state);
+
+        const stepOnce = () => {
+          const dir = (state.up ? 1 : 0) + (state.down ? -1 : 0);
+          if (!dir) return;
+          const cur = (widgetsRef.current || []).find((x) => String(x?.id) === String(w.id));
+          const base = Number(cur?.props?.value ?? 0);
+          setSliderUiValue(w.id, base + dir, { trigger: true });
+        };
+
+        if (!state.timer) {
+          stepOnce();
+          state.timer = setInterval(stepOnce, SLIDER_KEY_REPEAT_MS);
+          sliderKeyRef.current.set(key, state);
+        }
+      }
     };
     const onUp = (e) => {
       const code = String(e.code || '');
@@ -1278,6 +1600,29 @@ const ControllerTab = forwardRef(function ControllerTab(
         if (mode === BUTTON_MODE_TOGGLE) continue;
         setMomentaryButtonSource(w.id, 'key', false);
       }
+      for (const w of ws) {
+        if (w.type !== 'slider') continue;
+        const up = String(w.bindings?.keyUp || '');
+        const down = String(w.bindings?.keyDown || '');
+        if (code !== up && code !== down) continue;
+        const key = String(w.id);
+        const state = sliderKeyRef.current.get(key) || { up: false, down: false, timer: null };
+        if (code === up) state.up = false;
+        if (code === down) state.down = false;
+        if (!state.up && !state.down) {
+          if (state.timer) {
+            try {
+              clearInterval(state.timer);
+            } catch (_) {
+              // ignore
+            }
+          }
+          sliderKeyRef.current.delete(key);
+          if (w.props?.autoCenter) setSliderUiValue(w.id, 0, { trigger: true });
+        } else {
+          sliderKeyRef.current.set(key, state);
+        }
+      }
     };
     window.addEventListener('keydown', onDown);
     window.addEventListener('keyup', onUp);
@@ -1285,9 +1630,9 @@ const ControllerTab = forwardRef(function ControllerTab(
       window.removeEventListener('keydown', onDown);
       window.removeEventListener('keyup', onUp);
     };
-  }, [runMode, startRoutine, setButtonUiValue, setMomentaryButtonSource]);
+  }, [runMode, startRoutine, setButtonUiValue, setMomentaryButtonSource, setSliderUiValue]);
 
-  // Gamepad triggers (buttons + joystick axes)
+  // Gamepad triggers (buttons + joystick axes + slider steps)
   useEffect(() => {
     if (!runMode) return;
     if (typeof navigator?.getGamepads !== 'function') return;
@@ -1338,6 +1683,36 @@ const ControllerTab = forwardRef(function ControllerTab(
             if (rid) startRoutine(rid).catch(() => {});
             prevJoyRef.current.set(w.id, { x, y });
           }
+        }
+
+        if (w.type === 'slider') {
+          const idx = Number(w.bindings?.gamepad?.index ?? 0);
+          const upBtn = Number(w.bindings?.gamepad?.buttonUp ?? -1);
+          const downBtn = Number(w.bindings?.gamepad?.buttonDown ?? -1);
+          if (upBtn < 0 && downBtn < 0) continue;
+          const pad = pads[idx];
+          const up = upBtn >= 0 ? Boolean(pad?.buttons?.[upBtn]?.pressed) : false;
+          const down = downBtn >= 0 ? Boolean(pad?.buttons?.[downBtn]?.pressed) : false;
+          const key = String(w.id);
+          const prev = sliderPadRef.current.get(key) || { up: false, down: false, lastAt: 0 };
+          const now = Date.now();
+
+          if ((up || down) && (!prev.up && !prev.down)) prev.lastAt = 0;
+
+          if (up || down) {
+            const dir = (up ? 1 : 0) + (down ? -1 : 0);
+            if (dir && (!prev.lastAt || now - prev.lastAt >= SLIDER_KEY_REPEAT_MS)) {
+              setSliderUiValue(w.id, Number(w.props?.value ?? 0) + dir, { trigger: true });
+              prev.lastAt = now;
+            }
+          } else if ((prev.up || prev.down) && w.props?.autoCenter) {
+            setSliderUiValue(w.id, 0, { trigger: true });
+            prev.lastAt = 0;
+          }
+
+          prev.up = up;
+          prev.down = down;
+          sliderPadRef.current.set(key, prev);
         }
       }
     };
@@ -1579,6 +1954,12 @@ const ControllerTab = forwardRef(function ControllerTab(
 
             if (w.type === 'slider') {
               const isV = (w.props?.orientation || 'h') === 'v';
+              const mode = w.props?.mode === SLIDER_MODE_CENTER ? SLIDER_MODE_CENTER : SLIDER_MODE_ZERO_LEFT;
+              const range = clamp(Math.round(Number(w.props?.range ?? 100)), 1, 10_000);
+              const min = mode === SLIDER_MODE_CENTER ? -range : 0;
+              const max = range;
+              const zeroPct = max === min ? 0 : ((0 - min) / (max - min)) * 100;
+              const value = clamp(Number(w.props?.value ?? 0), min, max);
               return (
                 <div
                   key={w.id}
@@ -1592,44 +1973,91 @@ const ControllerTab = forwardRef(function ControllerTab(
                     setConfigWidgetId(w.id);
                   }}
                 >
-                  <input
-                    type="range"
-                    disabled={!runMode}
-                    min={Number(w.props?.min ?? 0)}
-                    max={Number(w.props?.max ?? 100)}
-                    step={Number(w.props?.step ?? 1)}
-                    value={Number(w.props?.value ?? 0)}
-                    onChange={(e) => {
-                      const val = Number(e.target.value);
-                      controllerState.sliderSet(w.name, val);
-                      const rid = String(w.bindings?.onChange || '');
-                      if (rid) startRoutine(rid).catch(() => {});
-                      updateWidgets(widgets.map((x) => (x.id === w.id ? { ...x, props: { ...(x.props || {}), value: val } } : x)));
-                    }}
-                    style={
-                      isV
-                        ? {
-                            width: '100%',
-                            height: '100%',
-                            writingMode: 'bt-lr',
-                            WebkitAppearance: 'slider-vertical',
-                            touchAction: 'none',
-                            margin: 0,
-                            padding: 0,
-                            display: 'block',
-                            boxSizing: 'border-box',
-                          }
-                        : {
-                            width: '100%',
-                            height: '100%',
-                            touchAction: 'none',
-                            margin: 0,
-                            padding: 0,
-                            display: 'block',
-                            boxSizing: 'border-box',
-                          }
-                    }
-                  />
+                  <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+                    {isV ? (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          left: 0,
+                          right: 0,
+                          top: `${100 - zeroPct}%`,
+                          height: 2,
+                          background: '#c62828',
+                          opacity: 0.5,
+                          transform: 'translateY(-50%)',
+                          pointerEvents: 'none',
+                        }}
+                      />
+                    ) : (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          bottom: 0,
+                          left: `${zeroPct}%`,
+                          width: 2,
+                          background: '#c62828',
+                          opacity: 0.5,
+                          transform: 'translateX(-50%)',
+                          pointerEvents: 'none',
+                        }}
+                      />
+                    )}
+                    <input
+                      type="range"
+                      disabled={!runMode}
+                      min={min}
+                      max={max}
+                      step={Number(w.props?.step ?? 1)}
+                      value={value}
+                      onChange={(e) => {
+                        const val = clamp(Number(e.target.value), min, max);
+                        controllerState.sliderSet(w.name, val);
+                        const rid = String(w.bindings?.onChange || '');
+                        if (rid) startRoutine(rid).catch(() => {});
+                        updateWidgets(widgets.map((x) => (x.id === w.id ? { ...x, props: { ...(x.props || {}), value: val } } : x)));
+                      }}
+                      onPointerUp={() => {
+                        if (!runMode) return;
+                        if (!w.props?.autoCenter) return;
+                        controllerState.sliderSet(w.name, 0);
+                        const rid = String(w.bindings?.onChange || '');
+                        if (rid) startRoutine(rid).catch(() => {});
+                        updateWidgets(widgets.map((x) => (x.id === w.id ? { ...x, props: { ...(x.props || {}), value: 0 } } : x)));
+                      }}
+                      onPointerCancel={() => {
+                        if (!runMode) return;
+                        if (!w.props?.autoCenter) return;
+                        controllerState.sliderSet(w.name, 0);
+                        const rid = String(w.bindings?.onChange || '');
+                        if (rid) startRoutine(rid).catch(() => {});
+                        updateWidgets(widgets.map((x) => (x.id === w.id ? { ...x, props: { ...(x.props || {}), value: 0 } } : x)));
+                      }}
+                      style={
+                        isV
+                          ? {
+                              width: '100%',
+                              height: '100%',
+                              writingMode: 'bt-lr',
+                              WebkitAppearance: 'slider-vertical',
+                              touchAction: 'none',
+                              margin: 0,
+                              padding: 0,
+                              display: 'block',
+                              boxSizing: 'border-box',
+                            }
+                          : {
+                              width: '100%',
+                              height: '100%',
+                              touchAction: 'none',
+                              margin: 0,
+                              padding: 0,
+                              display: 'block',
+                              boxSizing: 'border-box',
+                            }
+                      }
+                    />
+                  </div>
                 </div>
               );
             }
@@ -1710,7 +2138,7 @@ const ControllerTab = forwardRef(function ControllerTab(
                   key={w.id}
                   style={
                     flash
-                      ? { ...commonStyle, background: '#0b3d91', color: '#fff', borderColor: '#0b3d91' }
+                      ? { ...commonStyle, background: '#0b3d91', color: '#fff', border: '1px solid #0b3d91' }
                       : commonStyle
                   }
                   onPointerDown={() => !runMode && setSelectedId(w.id)}
