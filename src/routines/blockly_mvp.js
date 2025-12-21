@@ -58,9 +58,9 @@ let routineOptionsProvider = null;
 export const setRoutineOptionsProvider = (fn) => {
   routineOptionsProvider = typeof fn === 'function' ? fn : null;
 };
-const getRoutineOptions = () => {
+const getRoutineOptions = (ctx) => {
   try {
-    const res = routineOptionsProvider ? routineOptionsProvider() : null;
+    const res = routineOptionsProvider ? routineOptionsProvider(ctx) : null;
     const list = Array.isArray(res) ? res : [];
     const options = list
       .map((r) => ({ id: String(r?.id || ''), name: String(r?.name || '').trim() }))
@@ -165,7 +165,14 @@ const defineBlocksOnce = (() => {
 
     const makeIdDropdown = (kind) => new Blockly.FieldDropdown(() => getIdOptions(kind));
     const makeControllerDropdown = (kind) => new Blockly.FieldDropdown(() => getControllerWidgetOptions(kind));
-    const makeRoutineDropdown = () => new Blockly.FieldDropdown(() => getRoutineOptions());
+    const makeRoutineDropdown = () =>
+      new Blockly.FieldDropdown(function () {
+        const block = typeof this.getSourceBlock === 'function' ? this.getSourceBlock() : null;
+        const ws = block?.workspace || null;
+        const currentRoutineId = String(ws?.__jimuRoutineId || '');
+        const includeRoutineId = typeof this.getValue === 'function' ? String(this.getValue() || '') : '';
+        return getRoutineOptions({ currentRoutineId, includeRoutineId });
+      });
     const appendEyesMaskInput = (block) => {
       const ids = getNumericIdOptions('eyes');
       const row = block.appendDummyInput().appendField('eyes');
@@ -1510,7 +1517,7 @@ export const getBlocklyToolbox = () => {
   };
 };
 
-export const createWorkspace = (el, { initialXmlText } = {}) => {
+export const createWorkspace = (el, { initialXmlText, routineId } = {}) => {
   defineBlocksOnce();
   const workspace = Blockly.inject(el, {
     toolbox: getBlocklyToolbox(),
@@ -1518,6 +1525,12 @@ export const createWorkspace = (el, { initialXmlText } = {}) => {
     grid: { spacing: 20, length: 3, colour: '#ccc', snap: true },
     zoom: { controls: true, wheel: true, startScale: 0.9, maxScale: 2.0, minScale: 0.3 },
   });
+
+  try {
+    workspace.__jimuRoutineId = routineId != null ? String(routineId) : '';
+  } catch (_) {
+    // ignore
+  }
 
   // Variables category without the built-in "Create variable" prompt button.
   // (The app has its own Variables dialog.)
@@ -1566,6 +1579,11 @@ export const xmlTextToAsyncJs = (xmlText, { debug = false } = {}) => {
   defineBlocksOnce();
   const workspace = new Blockly.Workspace();
   try {
+    try {
+      workspace.__jimuRoutineId = '';
+    } catch (_) {
+      // ignore
+    }
     const dom = xmlTextToDom(String(xmlText || '<xml></xml>'));
     Blockly.Xml.domToWorkspace(dom, workspace);
     return workspaceToAsyncJs(workspace, { debug });

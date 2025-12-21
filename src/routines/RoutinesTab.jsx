@@ -23,6 +23,49 @@ const newId = () => {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 };
 
+const parseSubroutineCalls = (xmlText) => {
+  const ids = new Set();
+  try {
+    const doc = new DOMParser().parseFromString(String(xmlText || ''), 'text/xml');
+    const blocks = Array.from(doc.getElementsByTagNameNS('*', 'block'));
+    for (const b of blocks) {
+      if (String(b.getAttribute('type') || '') !== 'jimu_routine') continue;
+      const fields = Array.from(b.getElementsByTagNameNS('*', 'field'));
+      for (const f of fields) {
+        if (String(f.getAttribute('name') || '') !== 'RID') continue;
+        const v = String(f.textContent || '').trim();
+        if (v) ids.add(v);
+      }
+    }
+  } catch (_) {
+    // ignore
+  }
+  return Array.from(ids);
+};
+
+const canReachRoutine = (startId, targetId, depsById) => {
+  const start = String(startId || '');
+  const target = String(targetId || '');
+  if (!start || !target) return false;
+  if (start === target) return true;
+
+  const seen = new Set();
+  const stack = [start];
+  while (stack.length) {
+    const id = stack.pop();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const deps = depsById.get(id) || [];
+    for (const dep of deps) {
+      const d = String(dep || '');
+      if (!d) continue;
+      if (d === target) return true;
+      if (!seen.has(d)) stack.push(d);
+    }
+  }
+  return false;
+};
+
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const hexToRgb = (hex) => {
   const s = String(hex || '').trim();
@@ -528,7 +571,40 @@ const RoutinesTab = forwardRef(function RoutinesTab(
   }, [controllerData]);
 
   useEffect(() => {
-    setRoutineOptionsProvider(() => (Array.isArray(routines) ? routines : []));
+    setRoutineOptionsProvider(({ currentRoutineId, includeRoutineId } = {}) => {
+      const list = Array.isArray(routines) ? routines : [];
+      const currentId = String(currentRoutineId || '');
+      const includeId = String(includeRoutineId || '');
+      if (!currentId) return list;
+
+      const depsById = new Map();
+      for (const r of list) {
+        const rid = String(r?.id || '');
+        if (!rid) continue;
+        let xml = '';
+        try {
+          xml = String(routineXmlCacheRef.current.get(rid) ?? '');
+        } catch (_) {
+          xml = '';
+        }
+        depsById.set(rid, parseSubroutineCalls(xml));
+      }
+
+      const disallowed = new Set([currentId]);
+      for (const r of list) {
+        const rid = String(r?.id || '');
+        if (!rid) continue;
+        if (rid === includeId) continue; // never drop current value from menu
+        if (canReachRoutine(rid, currentId, depsById)) disallowed.add(rid);
+      }
+
+      return list.filter((r) => {
+        const rid = String(r?.id || '');
+        if (!rid) return false;
+        if (rid === includeId) return true;
+        return !disallowed.has(rid);
+      });
+    });
     return () => setRoutineOptionsProvider(null);
   }, [routines]);
 
@@ -627,7 +703,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     try {
       const initXml = editorInitialXmlRef.current || editorXml;
       suppressDirtyRef.current = true;
-      ws = createWorkspace(div, { initialXmlText: initXml });
+      ws = createWorkspace(div, { initialXmlText: initXml, routineId: editorRoutine.id });
       workspaceRef.current = ws;
       ws.__jimuOpenVarsDialog = () => setVarsOpen(true);
 
@@ -1406,6 +1482,32 @@ const RoutinesTab = forwardRef(function RoutinesTab(
         </button>
         <button
           onClick={async () => {
+            const targetId = String(editorRoutine.id || '');
+            const depsById = new Map();
+            for (const rr of Array.isArray(routines) ? routines : []) {
+              const rid = String(rr?.id || '');
+              if (!rid) continue;
+              let xml = '';
+              try {
+                xml = String(routineXmlCacheRef.current.get(rid) ?? '');
+              } catch (_) {
+                xml = '';
+              }
+              depsById.set(rid, parseSubroutineCalls(xml));
+            }
+            const usedBy = (Array.isArray(routines) ? routines : [])
+              .filter((rr) => {
+                const rid = String(rr?.id || '');
+                if (!rid || rid === targetId) return false;
+                const deps = depsById.get(rid) || [];
+                return deps.includes(targetId);
+              })
+              .map((rr) => String(rr?.name || rr?.id || ''))
+              .filter(Boolean);
+            if (usedBy.length) {
+              window.alert(`Cannot delete routine "${editorRoutine.name}". Used as subroutine by: ${usedBy.join(', ')}`);
+              return;
+            }
             const ok = window.confirm(`Delete routine "${editorRoutine.name}"?`);
             if (!ok) return;
             await stopRoutine();
@@ -1486,6 +1588,32 @@ const RoutinesTab = forwardRef(function RoutinesTab(
                   </button>
                   <button
                     onClick={async () => {
+                      const targetId = String(r?.id || '');
+                      const depsById = new Map();
+                      for (const rr of Array.isArray(routines) ? routines : []) {
+                        const rid = String(rr?.id || '');
+                        if (!rid) continue;
+                        let xml = '';
+                        try {
+                          xml = String(routineXmlCacheRef.current.get(rid) ?? '');
+                        } catch (_) {
+                          xml = '';
+                        }
+                        depsById.set(rid, parseSubroutineCalls(xml));
+                      }
+                      const usedBy = (Array.isArray(routines) ? routines : [])
+                        .filter((rr) => {
+                          const rid = String(rr?.id || '');
+                          if (!rid || rid === targetId) return false;
+                          const deps = depsById.get(rid) || [];
+                          return deps.includes(targetId);
+                        })
+                        .map((rr) => String(rr?.name || rr?.id || ''))
+                        .filter(Boolean);
+                      if (usedBy.length) {
+                        window.alert(`Cannot delete routine "${r.name}". Used as subroutine by: ${usedBy.join(', ')}`);
+                        return;
+                      }
                       const ok = window.confirm(`Delete routine "${r.name}"?`);
                       if (!ok) return;
                       routineXmlCacheRef.current.delete(String(r.id));
