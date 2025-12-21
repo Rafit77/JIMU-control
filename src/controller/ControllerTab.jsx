@@ -869,6 +869,8 @@ const ControllerTab = forwardRef(function ControllerTab(
   const widgetsRef = useRef(widgets);
   const prevButtonsRef = useRef(new Map()); // widgetId -> bool
   const prevJoyRef = useRef(new Map()); // widgetId -> {x,y}
+  const buttonSourcesRef = useRef(new Map()); // widgetId -> { mouse, key, pad }
+  const buttonEffectiveRef = useRef(new Map()); // widgetId -> bool (momentary effective pressed)
 
   const getWidget = (id) => widgets.find((w) => String(w?.id) === String(id)) || null;
   const selectedWidget = getWidget(selectedId);
@@ -881,6 +883,15 @@ const ControllerTab = forwardRef(function ControllerTab(
   const updateWidgets = useCallback((nextWidgets) => {
     onUpdateControllerData?.((prev) => ({ ...(prev || {}), widgets: nextWidgets }));
   }, [onUpdateControllerData]);
+
+  const setButtonUiValue = useCallback((widgetId, mode, value) => {
+    const current = widgetsRef.current || [];
+    const next = current.map((x) =>
+      x.id === widgetId ? { ...x, props: { ...(x.props || {}), mode, value: Boolean(value) } } : x,
+    );
+    widgetsRef.current = next;
+    updateWidgets(next);
+  }, [updateWidgets]);
 
   useEffect(() => {
     const namesByKind = {
@@ -1089,6 +1100,47 @@ const ControllerTab = forwardRef(function ControllerTab(
     }
   }, [runMode]);
 
+  useEffect(() => {
+    if (!runMode) return;
+    buttonSourcesRef.current.clear();
+    buttonEffectiveRef.current.clear();
+    prevButtonsRef.current.clear();
+    prevJoyRef.current.clear();
+  }, [runMode]);
+
+  const setMomentaryButtonSource = useCallback((widgetId, source, isPressed) => {
+    const ws = widgetsRef.current || [];
+    const w = ws.find((x) => String(x?.id) === String(widgetId));
+    if (!w || w.type !== 'button') return;
+
+    const mode = w.props?.mode === BUTTON_MODE_TOGGLE ? BUTTON_MODE_TOGGLE : BUTTON_MODE_MOMENTARY;
+    if (mode === BUTTON_MODE_TOGGLE) return;
+
+    const key = String(w.id);
+    const prevSources = buttonSourcesRef.current.get(key) || { mouse: false, key: false, pad: false };
+    const nextSources = { ...prevSources, [source]: Boolean(isPressed) };
+    buttonSourcesRef.current.set(key, nextSources);
+
+    const effective = Boolean(nextSources.mouse || nextSources.key || nextSources.pad);
+    const prevEffective = Boolean(buttonEffectiveRef.current.get(key) ?? false);
+    const currentVal = Boolean(w.props?.value);
+
+    if (effective === prevEffective) {
+      if (currentVal !== effective) {
+        controllerState.switchSet(w.name, effective);
+        setButtonUiValue(w.id, mode, effective);
+      }
+      return;
+    }
+
+    buttonEffectiveRef.current.set(key, effective);
+    controllerState.switchSet(w.name, effective);
+
+    const rid = effective ? String(w.bindings?.onPress || '') : String(w.bindings?.onRelease || '');
+    if (rid) startRoutine(rid).catch(() => {});
+    setButtonUiValue(w.id, mode, effective);
+  }, [setButtonUiValue, startRoutine]);
+
   // Keyboard triggers (buttons only, for now)
   useEffect(() => {
     if (!runMode) return;
@@ -1096,7 +1148,8 @@ const ControllerTab = forwardRef(function ControllerTab(
       if (e.repeat) return;
       const code = String(e.code || '');
       if (!code) return;
-      for (const w of widgets) {
+      const ws = widgetsRef.current || [];
+      for (const w of ws) {
         if (w.type !== 'button') continue;
         if (!w.bindings?.key) continue;
         if (String(w.bindings.key) === code) {
@@ -1106,18 +1159,9 @@ const ControllerTab = forwardRef(function ControllerTab(
             controllerState.switchSet(w.name, nextVal);
             const rid = nextVal ? String(w.bindings?.onPress || '') : String(w.bindings?.onRelease || '');
             if (rid) startRoutine(rid).catch(() => {});
-            updateWidgets(
-              widgets.map((x) =>
-                x.id === w.id ? { ...x, props: { ...(x.props || {}), mode, value: nextVal } } : x,
-              ),
-            );
+            setButtonUiValue(w.id, mode, nextVal);
           } else {
-            controllerState.switchSet(w.name, true);
-            const rid = String(w.bindings?.onPress || '');
-            if (rid) startRoutine(rid).catch(() => {});
-            updateWidgets(
-              widgets.map((x) => (x.id === w.id ? { ...x, props: { ...(x.props || {}), mode, value: true } } : x)),
-            );
+            setMomentaryButtonSource(w.id, 'key', true);
           }
         }
       }
@@ -1125,16 +1169,14 @@ const ControllerTab = forwardRef(function ControllerTab(
     const onUp = (e) => {
       const code = String(e.code || '');
       if (!code) return;
-      for (const w of widgets) {
+      const ws = widgetsRef.current || [];
+      for (const w of ws) {
         if (w.type !== 'button') continue;
         if (!w.bindings?.key) continue;
         if (String(w.bindings.key) !== code) continue;
         const mode = w.props?.mode === BUTTON_MODE_TOGGLE ? BUTTON_MODE_TOGGLE : BUTTON_MODE_MOMENTARY;
         if (mode === BUTTON_MODE_TOGGLE) continue;
-        controllerState.switchSet(w.name, false);
-        const rid = String(w.bindings?.onRelease || '');
-        if (rid) startRoutine(rid).catch(() => {});
-        updateWidgets(widgets.map((x) => (x.id === w.id ? { ...x, props: { ...(x.props || {}), mode, value: false } } : x)));
+        setMomentaryButtonSource(w.id, 'key', false);
       }
     };
     window.addEventListener('keydown', onDown);
@@ -1143,25 +1185,17 @@ const ControllerTab = forwardRef(function ControllerTab(
       window.removeEventListener('keydown', onDown);
       window.removeEventListener('keyup', onUp);
     };
-  }, [runMode, widgets, startRoutine]);
+  }, [runMode, startRoutine, setButtonUiValue, setMomentaryButtonSource]);
 
   // Gamepad triggers (buttons + joystick axes)
   useEffect(() => {
     if (!runMode) return;
     if (typeof navigator?.getGamepads !== 'function') return;
 
-    prevButtonsRef.current.clear();
-    prevJoyRef.current.clear();
-
     const setButtonValue = (widgetId, name, mode, value, routineId) => {
       controllerState.switchSet(name, Boolean(value));
       if (routineId) startRoutine(routineId).catch(() => {});
-      const current = widgetsRef.current;
-      const next = current.map((x) =>
-        x.id === widgetId ? { ...x, props: { ...(x.props || {}), mode, value: Boolean(value) } } : x,
-      );
-      widgetsRef.current = next;
-      updateWidgets(next);
+      setButtonUiValue(widgetId, mode, value);
     };
 
     const tick = () => {
@@ -1183,19 +1217,7 @@ const ControllerTab = forwardRef(function ControllerTab(
               setButtonValue(w.id, w.name, mode, nextVal, rid);
             }
           } else {
-            if (!prev && pressed) {
-              const rid = String(w.bindings?.onPress || '');
-              setButtonValue(w.id, w.name, mode, true, rid);
-            }
-            if (prev && !pressed) {
-              const rid = String(w.bindings?.onRelease || '');
-              setButtonValue(w.id, w.name, mode, false, rid);
-            }
-            // Recovery: if we ever miss an edge, keep UI/store consistent with the polled value.
-            const currentVal = Boolean(w.props?.value);
-            if (pressed !== currentVal && !(!prev && pressed) && !(prev && !pressed)) {
-              setButtonValue(w.id, w.name, mode, pressed, '');
-            }
+            setMomentaryButtonSource(w.id, 'pad', pressed);
           }
           prevButtonsRef.current.set(w.id, pressed);
         }
@@ -1222,7 +1244,7 @@ const ControllerTab = forwardRef(function ControllerTab(
 
     const t = setInterval(tick, 50);
     return () => clearInterval(t);
-  }, [runMode, startRoutine, updateWidgets]);
+  }, [runMode, startRoutine, setButtonUiValue, setMomentaryButtonSource]);
 
   // Live store subscription to re-render LEDs/displays
   const [, bump] = useState(0);
@@ -1433,30 +1455,17 @@ const ControllerTab = forwardRef(function ControllerTab(
                       } catch (_) {
                         // ignore
                       }
-                      controllerState.switchSet(w.name, true);
-                      const rid = String(w.bindings?.onPress || '');
-                      if (rid) startRoutine(rid).catch(() => {});
-                      updateWidgets(
-                        widgets.map((x) => (x.id === w.id ? { ...x, props: { ...(x.props || {}), mode, value: true } } : x)),
-                      );
+                      setMomentaryButtonSource(w.id, 'mouse', true);
                     }}
                     onPointerUp={() => {
                       if (!runMode) return;
                       if (mode === BUTTON_MODE_TOGGLE) return;
-                      controllerState.switchSet(w.name, false);
-                      const rid = String(w.bindings?.onRelease || '');
-                      if (rid) startRoutine(rid).catch(() => {});
-                      updateWidgets(
-                        widgets.map((x) => (x.id === w.id ? { ...x, props: { ...(x.props || {}), mode, value: false } } : x)),
-                      );
+                      setMomentaryButtonSource(w.id, 'mouse', false);
                     }}
                     onPointerCancel={() => {
                       if (!runMode) return;
                       if (mode === BUTTON_MODE_TOGGLE) return;
-                      controllerState.switchSet(w.name, false);
-                      updateWidgets(
-                        widgets.map((x) => (x.id === w.id ? { ...x, props: { ...(x.props || {}), mode, value: false } } : x)),
-                      );
+                      setMomentaryButtonSource(w.id, 'mouse', false);
                     }}
                   >
                     {w.name}

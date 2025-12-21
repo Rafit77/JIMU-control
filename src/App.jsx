@@ -269,9 +269,16 @@ export default function App() {
   const controllerRef = useRef(null);
   const routineXmlRamCacheRef = useRef(new Map()); // routineId -> xml (RAM-only, per current project)
 
-  const addLog = useCallback((msg) => {
-    setLog((prev) => [`${new Date().toLocaleTimeString()} ${msg}`, ...prev].slice(0, 200));
-  }, []);
+  const addLog = useCallback((msg, opts = {}) => {
+    const persist = opts?.persist !== false;
+    const line = `${new Date().toLocaleTimeString()} ${msg}`;
+    setLog((prev) => [line, ...prev].slice(0, 200));
+    try {
+      if (persist && ipc && currentProject?.id) ipc.send?.('app:log', { projectId: currentProject.id, line });
+    } catch (_) {
+      // ignore
+    }
+  }, [ipc, currentProject?.id]);
 
   const payloadToHex = (payload) => {
     if (!payload) return '';
@@ -327,6 +334,12 @@ export default function App() {
     } catch (e) {
       addLog(`Routine export failed: ${e?.message || String(e)}`);
     }
+    const routinesList = Array.isArray(routinesPayload?.routines)
+      ? routinesPayload.routines
+      : Array.isArray(currentProject.data?.routines)
+        ? currentProject.data.routines
+        : [];
+    const routineXmlById = routinesPayload?.routineXmlById && typeof routinesPayload.routineXmlById === 'object' ? routinesPayload.routineXmlById : null;
     const dataToSave = {
       ...(currentProject.data || {}),
       variables: (() => {
@@ -336,8 +349,8 @@ export default function App() {
           return currentProject.data?.variables || {};
         }
       })(),
-      routines: Array.isArray(routinesPayload?.routines) ? routinesPayload.routines : currentProject.data?.routines || [],
-      __routineXmlById: routinesPayload?.routineXmlById || {},
+      routines: routinesList,
+      ...(routineXmlById ? { __routineXmlById: routineXmlById } : null),
       hardware: {
         ...(currentProject.data?.hardware || {}),
         modules: modules || currentProject.data?.hardware?.modules || null,
@@ -633,6 +646,12 @@ export default function App() {
       refreshProjectList().catch(() => {});
       addLog('Use the Project picker to open a project');
     };
+    const onUiLog = (_e, data) => {
+      const msg = typeof data === 'string' ? data : data?.message;
+      // Main-process diagnostics already know how to persist to the run log;
+      // avoid forwarding them back to main again.
+      if (msg) addLog(String(msg), { persist: false });
+    };
     const onCloseProject = () => {
       handleCloseProject();
     };
@@ -682,6 +701,7 @@ export default function App() {
     ipc.on('ui:saveProject', onSaveProject);
     ipc.on('ui:openProject', onOpenProject);
     ipc.on('ui:closeProject', onCloseProject);
+    ipc.on('ui:log', onUiLog);
     ipc.on('jimu:servoPos', onServoPos);
     ipc.on('jimu:deviceError', onDeviceError);
     ipc.on('jimu:errorReport', onErrorReport);
@@ -697,6 +717,7 @@ export default function App() {
       ipc.removeListener('ui:saveProject', onSaveProject);
       ipc.removeListener('ui:openProject', onOpenProject);
       ipc.removeListener('ui:closeProject', onCloseProject);
+      ipc.removeListener('ui:log', onUiLog);
       ipc.removeListener('jimu:servoPos', onServoPos);
       ipc.removeListener('jimu:deviceError', onDeviceError);
       ipc.removeListener('jimu:errorReport', onErrorReport);

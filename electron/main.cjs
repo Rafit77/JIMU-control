@@ -14,6 +14,8 @@ const isDev =
 let jimu = null;
 let JimuBleClient = null;
 let winRef = null;
+let currentProjectId = null;
+const projectRunLogPathById = new Map(); // projectId -> filePath (current app run)
 
 const clampByte = (v) => Math.max(0, Math.min(255, Math.round(v ?? 0)));
 const toDataUrlPng = (buf) => `data:image/png;base64,${Buffer.from(buf).toString('base64')}`;
@@ -28,6 +30,7 @@ const getSavesRoot = () => path.join(app.getAppPath(), 'jimu_saves');
 const getProjectDir = (projectId) => path.join(getSavesRoot(), projectId);
 const getRoutinesDir = (projectId) => path.join(getProjectDir(projectId), 'routines');
 const getRoutinePath = (projectId, routineId) => path.join(getRoutinesDir(projectId), `${routineId}.xml`);
+const getLogsDir = (projectId) => path.join(getProjectDir(projectId), 'log');
 
 const defaultRoutineXml = () => '<xml xmlns="https://developers.google.com/blockly/xml"></xml>\n';
 const newId = () => {
@@ -45,6 +48,66 @@ const ensureDir = async (dir) => {
 const readJson = async (filePath) => JSON.parse(await fs.readFile(filePath, 'utf8'));
 const writeJson = async (filePath, obj) => {
   await fs.writeFile(filePath, `${JSON.stringify(obj, null, 2)}\n`, 'utf8');
+};
+
+const uiLog = (message) => {
+  try {
+    if (!winRef) return;
+    winRef.webContents.send('ui:log', { message: String(message ?? '') });
+  } catch (_) {
+    // ignore
+  }
+};
+
+const formatRunStamp = (d = new Date()) => {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
+};
+
+const ensureProjectRunLog = async (projectId) => {
+  if (!projectId) return null;
+  if (projectRunLogPathById.has(projectId)) return projectRunLogPathById.get(projectId);
+  const dir = getLogsDir(projectId);
+  await ensureDir(dir);
+  const filePath = path.join(dir, `${formatRunStamp(new Date())}.log`);
+  projectRunLogPathById.set(projectId, filePath);
+  return filePath;
+};
+
+const appendProjectRunLog = async (projectId, line) => {
+  if (!projectId) return;
+  try {
+    const filePath = await ensureProjectRunLog(projectId);
+    if (!filePath) return;
+    await fs.appendFile(filePath, `${String(line ?? '')}\n`, 'utf8');
+  } catch (_) {
+    // ignore
+  }
+};
+
+const backupFile = async (srcPath) => {
+  try {
+    await fs.copyFile(srcPath, `${srcPath}.bak`);
+    return true;
+  } catch (e) {
+    if (e?.code === 'ENOENT') return false;
+    return false;
+  }
+};
+
+const backupAllRoutineFiles = async (projectId) => {
+  if (!projectId) return;
+  try {
+    await ensureDir(getRoutinesDir(projectId));
+    const entries = await fs.readdir(getRoutinesDir(projectId), { withFileTypes: true });
+    for (const e of entries) {
+      if (!e.isFile()) continue;
+      if (!e.name.endsWith('.xml')) continue;
+      await backupFile(path.join(getRoutinesDir(projectId), e.name));
+    }
+  } catch (_) {
+    // ignore
+  }
 };
 
 const listProjects = async () => {
@@ -133,6 +196,11 @@ const saveProject = async ({ id, data }) => {
   await ensureDir(path.join(projectDir, 'assets'));
   await ensureDir(path.join(projectDir, 'routines'));
   const now = new Date().toISOString();
+
+  // Always create a per-save backup of every routine XML present on disk.
+  // This protects against any accidental write/wipe while we keep a RAM-first model.
+  await backupAllRoutineFiles(id);
+
   // Preserve routines from disk when the UI doesn't provide them.
   // (Older UI paths managed routines via `routine:*` IPC calls only.)
   let preservedRoutines = null;
@@ -144,34 +212,72 @@ const saveProject = async ({ id, data }) => {
   }
 
   const routineXmlById = data && typeof data === 'object' ? data.__routineXmlById : null;
+  const routineXmlProvided =
+    routineXmlById && typeof routineXmlById === 'object' && Object.keys(routineXmlById).length > 0;
   const next = { ...(data || {}), updatedAt: now };
   delete next.__routineXmlById;
   if (!Array.isArray(next.routines) && preservedRoutines) next.routines = preservedRoutines;
+  if (Array.isArray(next.routines) && next.routines.length === 0 && preservedRoutines?.length && !routineXmlProvided) {
+    // Safety: prevent accidental wipe if UI sends an empty list without the routine XML batch.
+    next.routines = preservedRoutines;
+  }
+  if (Array.isArray(next.routines) && next.routines.length === 0 && preservedRoutines?.length && routineXmlProvided) {
+    // Even if the UI provides some routine XML, an empty list is treated as unsafe by default.
+    // Prefer preserving routines rather than risking a full wipe.
+    const msg = `Safety: refusing to save empty routines list (preserving ${preservedRoutines.length})`;
+    uiLog(msg);
+    appendProjectRunLog(id, msg);
+    next.routines = preservedRoutines;
+  }
   if (!next.createdAt) next.createdAt = now;
   if (!next.schemaVersion) next.schemaVersion = 1;
 
   // If the UI provides routines + their XML, persist them as a batch.
   // This matches the "RAM-first" model: routines are edited in RAM and only
   // written to disk on Project Save.
-  if (Array.isArray(next.routines) && routineXmlById && typeof routineXmlById === 'object') {
+  if (Array.isArray(next.routines) && routineXmlProvided) {
     const keepIds = new Set(next.routines.map((r) => String(r?.id || '')).filter(Boolean));
     await ensureDir(getRoutinesDir(id));
+    let allRoutineXmlPresent = true;
 
     for (const rid of keepIds) {
-      const xml = Object.prototype.hasOwnProperty.call(routineXmlById, rid) ? routineXmlById[rid] : null;
-      const body = String(xml || defaultRoutineXml());
-      await fs.writeFile(getRoutinePath(id, rid), body, 'utf8');
+      if (!Object.prototype.hasOwnProperty.call(routineXmlById, rid) || routineXmlById[rid] == null) {
+        const msg = `Routine XML missing for id=${rid}; preserving existing file`;
+        uiLog(msg);
+        appendProjectRunLog(id, msg);
+        allRoutineXmlPresent = false;
+        continue;
+      }
+      const body = String(routineXmlById[rid] || defaultRoutineXml());
+      const routinePath = getRoutinePath(id, rid);
+      await backupFile(routinePath);
+      await fs.writeFile(routinePath, body, 'utf8');
+      const bytes = Buffer.byteLength(body, 'utf8');
+      const msg = `Routine saved to disk id=${rid} bytes=${bytes} (project save)`;
+      uiLog(msg);
+      appendProjectRunLog(id, msg);
     }
 
     // Delete routine XML files that are no longer referenced by project.json.
     try {
-      const entries = await fs.readdir(getRoutinesDir(id), { withFileTypes: true });
-      for (const e of entries) {
-        if (!e.isFile()) continue;
-        if (!e.name.endsWith('.xml')) continue;
-        const rid = e.name.slice(0, -4);
-        if (!keepIds.has(String(rid))) {
-          await fs.rm(getRoutinePath(id, rid), { force: true });
+      if (keepIds.size === 0) {
+        const msg = 'Safety: skipping routine file pruning because keepIds is empty';
+        uiLog(msg);
+        appendProjectRunLog(id, msg);
+      } else if (!allRoutineXmlPresent) {
+        const msg = 'Safety: skipping routine file pruning because routine XML batch is incomplete';
+        uiLog(msg);
+        appendProjectRunLog(id, msg);
+      } else {
+        const entries = await fs.readdir(getRoutinesDir(id), { withFileTypes: true });
+        for (const e of entries) {
+          if (!e.isFile()) continue;
+          if (!e.name.endsWith('.xml')) continue;
+          const rid = e.name.slice(0, -4);
+          if (!keepIds.has(String(rid))) {
+            await backupFile(getRoutinePath(id, rid));
+            await fs.rm(getRoutinePath(id, rid), { force: true });
+          }
         }
       }
     } catch (_) {
@@ -211,7 +317,12 @@ const createRoutine = async (projectId, { name } = {}) => {
   const now = new Date().toISOString();
   const routineName = safeName(name || 'Routine');
   await ensureDir(getRoutinesDir(projectId));
-  await fs.writeFile(getRoutinePath(projectId, id), defaultRoutineXml(), 'utf8');
+  const body = defaultRoutineXml();
+  await fs.writeFile(getRoutinePath(projectId, id), body, 'utf8');
+  const bytes = Buffer.byteLength(body, 'utf8');
+  const msg = `Routine saved to disk id=${String(id)} bytes=${bytes} (create)`;
+  uiLog(msg);
+  appendProjectRunLog(projectId, msg);
 
   const routines = await saveRoutineList(projectId, (prev) => [
     ...(prev || []),
@@ -241,6 +352,7 @@ const renameRoutine = async (projectId, routineId, nextName) => {
 const deleteRoutine = async (projectId, routineId) => {
   await saveRoutineList(projectId, (prev) => (prev || []).filter((r) => String(r?.id) !== String(routineId)));
   try {
+    await backupFile(getRoutinePath(projectId, routineId));
     await fs.rm(getRoutinePath(projectId, routineId), { force: true });
   } catch (_) {
     // ignore
@@ -258,7 +370,14 @@ const loadRoutineXml = async (projectId, routineId) => {
 
 const saveRoutineXml = async (projectId, routineId, xml) => {
   await ensureDir(getRoutinesDir(projectId));
-  await fs.writeFile(getRoutinePath(projectId, routineId), String(xml || defaultRoutineXml()), 'utf8');
+  const body = String(xml || defaultRoutineXml());
+  const routinePath = getRoutinePath(projectId, routineId);
+  await backupFile(routinePath);
+  await fs.writeFile(routinePath, body, 'utf8');
+  const bytes = Buffer.byteLength(body, 'utf8');
+  const msg = `Routine saved to disk id=${String(routineId)} bytes=${bytes}`;
+  uiLog(msg);
+  appendProjectRunLog(projectId, msg);
   await saveRoutineList(projectId, (prev, now) =>
     (prev || []).map((r) => (String(r?.id) === String(routineId) ? { ...(r || {}), updatedAt: now } : r)),
   );
@@ -338,11 +457,27 @@ const attachJimuEvents = () => {
 
 const registerIpc = () => {
   ipcMain.handle('project:list', async () => listProjects());
-  ipcMain.handle('project:create', async (_evt, { name, description } = {}) => createProject({ name, description }));
-  ipcMain.handle('project:clone', async (_evt, { fromId, name, description } = {}) =>
-    cloneProject({ fromId, name, description }),
-  );
-  ipcMain.handle('project:open', async (_evt, { id } = {}) => loadProject(id));
+  ipcMain.handle('project:create', async (_evt, { name, description } = {}) => {
+    const created = await createProject({ name, description });
+    currentProjectId = created?.id || null;
+    if (created?.id) projectRunLogPathById.delete(created.id);
+    if (created?.id) appendProjectRunLog(created.id, `=== Project created ${new Date().toISOString()} ===`);
+    return created;
+  });
+  ipcMain.handle('project:clone', async (_evt, { fromId, name, description } = {}) => {
+    const created = await cloneProject({ fromId, name, description });
+    currentProjectId = created?.id || null;
+    if (created?.id) projectRunLogPathById.delete(created.id);
+    if (created?.id) appendProjectRunLog(created.id, `=== Project cloned ${new Date().toISOString()} ===`);
+    return created;
+  });
+  ipcMain.handle('project:open', async (_evt, { id } = {}) => {
+    const opened = await loadProject(id);
+    currentProjectId = id || null;
+    if (id) projectRunLogPathById.delete(id);
+    if (id) appendProjectRunLog(id, `=== Project opened ${new Date().toISOString()} ===`);
+    return opened;
+  });
   ipcMain.handle('project:save', async (_evt, { id, data } = {}) => saveProject({ id, data }));
   ipcMain.handle('project:delete', async (_evt, { id } = {}) => {
     const root = getSavesRoot();
@@ -394,6 +529,12 @@ const registerIpc = () => {
     if (!projectId) throw new Error('projectId is required');
     if (!routineId) throw new Error('routineId is required');
     return saveRoutineXml(projectId, routineId, xml);
+  });
+
+  ipcMain.on('app:log', async (_evt, { projectId, line } = {}) => {
+    const pid = projectId || currentProjectId;
+    if (!pid || !line) return;
+    appendProjectRunLog(pid, String(line));
   });
 
   ipcMain.handle('jimu:scan', async () => {
