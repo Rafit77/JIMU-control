@@ -26,7 +26,7 @@ This document specifies Milestone 4: a **Controller** tab that lets the user des
 ## MVP widget set (well-defined elements)
 We intentionally limit the widget library to a small, well-defined set:
 - **Joystick**: 2-axis (x/y) joystick.
-- **Slider**: horizontal and vertical.
+- **Slider**: horizontal and vertical (with optional keyboard/gamepad stepping).
 - **Button**
 - **Switch**
 - **LED indicator**: small round/square color blob (display-only).
@@ -43,7 +43,7 @@ Use:
 Everything else can be implemented with simple components:
 - Button: `<button>`
 - Switch: checkbox-style input or Radix Switch
-- Slider: Radix Slider (already used in the app)
+- Slider: `<input type="range">` (current implementation)
 - LED: `<div>` with background color + border radius
 - Display: `<div>` text/number
 
@@ -91,6 +91,7 @@ Alternatives:
 - Layout is locked (no move/resize).
 - Widgets are interactive and publish their live state to a **Controller State Store**.
 - Widget events can start routines via bindings.
+- If the brick is disconnected, the top bar shows a red **JIMU not connected** warning (routines may still run, but hardware calls will fail).
 
 ## Controller State Store (shared RAM)
 Controller widgets should publish their state to an in-memory store (similar to global variables):
@@ -114,8 +115,7 @@ Yes, routines can (and should) run without the Blockly visual workspace.
 
 Recommended architecture:
 - Blockly XML (`routines/<id>.xml`) is the editor source of truth for editing.
-- On **Project → Save**, generate and persist a compiled JS form per routine (e.g. `routines/<id>.js`) OR store compiled JS in `project.json`.
-- The Controller tab runs routines using the compiled JS and the same `api` surface (JIMU commands, variables, controller inputs).
+- Current implementation: the Controller tab loads the routine XML (RAM cache or disk), compiles it to async JS at trigger time, and executes it with the same `api` surface (JIMU commands, variables, controller inputs).
 
 Why a “runner” is needed:
 - Blockly UI is only for editing/highlighting.
@@ -151,6 +151,8 @@ Suggested MVP bindings:
 - Slider:
   - publish live value
   - on value change → start selected routine
+  - optional keyboard `Up/Down` bindings: changes value by `±1` (repeat while held)
+  - optional gamepad button `Up/Down` bindings: changes value by `±1` (repeat while held)
 - Joystick:
   - optional physical gamepad joystick mapping (note: multiple sticks/axes per gamepad)
   - publish live x/y; optional deadzone + rate limit
@@ -179,3 +181,11 @@ Each widget:
   - no more than 1 instance of every configured routine
 - Should controller widget states be persisted between runs or reset on connect?
   - reset on connect
+
+## Slider widget (implementation notes)
+- Modes:
+  - `0` on left: value range `0..range`
+  - `0` in center: value range `-range..0..+range` (0 is marked on the slider)
+- `range` defaults to `100` (acts as max; min depends on mode).
+- Auto center: when enabled, releasing the slider returns it to `0`.
+- Keyboard/gamepad stepping repeats every ~250ms while held (constant in code).

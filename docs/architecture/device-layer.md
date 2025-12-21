@@ -33,3 +33,4 @@ Provide a single, tested API for the app/runtime to control a real JIMU brick, h
 - All public SDK calls are async and return decoded results or a typed error.
 - The SDK owns command serialization and pacing.
 - The SDK emits events (status/battery/frame/errors) for UI telemetry without coupling UI to protocol details.
+- For debugging, the app can log both RX and TX payloads as hex (`<= cmd=...` for received frames, `=> cmd=...` for transmitted frames) when verbose logging is enabled.

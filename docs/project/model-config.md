@@ -12,6 +12,10 @@ This tab is the **live hardware** surface: connect to a real JIMU brick, view de
   - battery voltage/charging flag (UI only; not stored to disk)
   - detected modules (UI only)
 - **Refresh status** re-reads status (module discovery) and updates the UI only.
+- **Change ID** opens a modal that can change module IDs (requires connection), then runs **Refresh status** to rescan detected modules:
+  - Select module type: Servo / Motor / IR / Ultrasonic / Eye / Speaker
+  - `From ID`: populated from currently detected IDs for the selected type and always includes `0` ("fix" mode for bad/hidden IDs)
+  - `To ID`: validated as `1..32` for servos, `1..8` for all other types
 
 Events pushed from the device:
 - `jimu:status` updates detected modules in UI.
@@ -96,4 +100,3 @@ Clicking an Eye opens a panel for a single eye ID:
 ## Revert behavior
 Project **Revert** reloads project data from disk and must update any open config panels:
 - servo/motor panels immediately reflect reloaded calibration values, or close if that module is no longer detected
-
