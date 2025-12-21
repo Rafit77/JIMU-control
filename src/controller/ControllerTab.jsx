@@ -1614,8 +1614,20 @@ const ControllerTab = forwardRef(function ControllerTab(
                             writingMode: 'bt-lr',
                             WebkitAppearance: 'slider-vertical',
                             touchAction: 'none',
+                            margin: 0,
+                            padding: 0,
+                            display: 'block',
+                            boxSizing: 'border-box',
                           }
-                        : { width: '100%', height: '100%', touchAction: 'none' }
+                        : {
+                            width: '100%',
+                            height: '100%',
+                            touchAction: 'none',
+                            margin: 0,
+                            padding: 0,
+                            display: 'block',
+                            boxSizing: 'border-box',
+                          }
                     }
                   />
                 </div>
