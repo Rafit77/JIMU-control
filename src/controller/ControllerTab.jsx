@@ -9,7 +9,13 @@ import { createRoutineApi } from '../routines/runtime_api.js';
 import * as globalVars from '../routines/global_vars.js';
 
 const GRID_PX = 40;
-const ROUTINE_RETRIGGER_COOLDOWN_MS = 300;
+// Routines are non-reentrant (we skip if already running). This is an additional safety
+// window to avoid accidental double-triggering from rapid UI events.
+// Timers must support 100ms cadence, so keep this at <= TIMER_MIN_MS.
+const ROUTINE_RETRIGGER_COOLDOWN_MS = 100;
+const TIMER_MIN_MS = 100;
+const TIMER_STEP_MS = 100;
+const TIMER_FLASH_MS = 50;
 const BUTTON_MODE_MOMENTARY = 'momentary';
 const BUTTON_MODE_TOGGLE = 'toggle';
 const overlapNoCompactor = { ...noCompactor, allowOverlap: true };
@@ -554,9 +560,17 @@ const WidgetConfig = ({ open, widget, routines, onClose, onChange, onDelete }) =
               <input
                 type="number"
                 value={Number(widget.bindings?.everyMs ?? 1000)}
-                onChange={(e) => setField(['bindings', 'everyMs'], Number(e.target.value))}
+                min={TIMER_MIN_MS}
+                step={TIMER_STEP_MS}
+                onChange={(e) => {
+                  const raw = Number(e.target.value);
+                  if (!Number.isFinite(raw)) return;
+                  const snapped = Math.round(raw / TIMER_STEP_MS) * TIMER_STEP_MS;
+                  setField(['bindings', 'everyMs'], clamp(snapped, TIMER_MIN_MS, 60_000));
+                }}
                 style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }}
               />
+              <div style={{ color: '#777', fontSize: 12 }}>min {TIMER_MIN_MS}ms, step {TIMER_STEP_MS}ms</div>
             </label>
           ) : null}
 
@@ -873,6 +887,8 @@ const ControllerTab = forwardRef(function ControllerTab(
   const prevJoyRef = useRef(new Map()); // widgetId -> {x,y}
   const buttonSourcesRef = useRef(new Map()); // widgetId -> { mouse, key, pad }
   const buttonEffectiveRef = useRef(new Map()); // widgetId -> bool (momentary effective pressed)
+  const timerFlashUntilRef = useRef(new Map()); // widgetId -> ts
+  const [, bumpTimerFlash] = useState(0);
 
   const getWidget = (id) => widgets.find((w) => String(w?.id) === String(id)) || null;
   const selectedWidget = getWidget(selectedId);
@@ -955,6 +971,14 @@ const ControllerTab = forwardRef(function ControllerTab(
     widgetsRef.current = next;
     updateWidgets(next);
   }, [updateWidgets]);
+
+  const flashTimer = useCallback((widgetId) => {
+    const id = String(widgetId ?? '');
+    if (!id) return;
+    timerFlashUntilRef.current.set(id, Date.now() + TIMER_FLASH_MS);
+    bumpTimerFlash((v) => v + 1);
+    setTimeout(() => bumpTimerFlash((v) => v + 1), TIMER_FLASH_MS + 20);
+  }, []);
 
   useEffect(() => {
     const namesByKind = {
@@ -1142,14 +1166,22 @@ const ControllerTab = forwardRef(function ControllerTab(
     const timers = [];
     for (const w of widgets) {
       if (w.type !== 'timer') continue;
-      const everyMs = clamp(Number(w.bindings?.everyMs ?? 1000), 10, 60_000);
+      const everyMs = clamp(
+        Math.round(Number(w.bindings?.everyMs ?? 1000) / TIMER_STEP_MS) * TIMER_STEP_MS,
+        TIMER_MIN_MS,
+        60_000,
+      );
       const rid = String(w.bindings?.onTick || '');
       if (!rid) continue;
-      const t = setInterval(() => startRoutine(rid).catch(() => {}), everyMs);
+      const wid = String(w.id);
+      const t = setInterval(() => {
+        flashTimer(wid);
+        startRoutine(rid).catch(() => {});
+      }, everyMs);
       timers.push(t);
     }
     return () => timers.forEach((t) => clearInterval(t));
-  }, [runMode, widgets, startRoutine]);
+  }, [runMode, widgets, startRoutine, flashTimer]);
 
   // Publish initial widget values into the controller state store when entering run mode.
   useEffect(() => {
@@ -1652,10 +1684,20 @@ const ControllerTab = forwardRef(function ControllerTab(
             }
 
             if (w.type === 'timer') {
+              const flash = runMode && Number(timerFlashUntilRef.current.get(String(w.id)) || 0) > Date.now();
+              const everyMs = clamp(
+                Math.round(Number(w.bindings?.everyMs ?? 1000) / TIMER_STEP_MS) * TIMER_STEP_MS,
+                TIMER_MIN_MS,
+                60_000,
+              );
               return (
                 <div
                   key={w.id}
-                  style={commonStyle}
+                  style={
+                    flash
+                      ? { ...commonStyle, background: '#0b3d91', color: '#fff', borderColor: '#0b3d91' }
+                      : commonStyle
+                  }
                   onPointerDown={() => !runMode && setSelectedId(w.id)}
                   onContextMenu={(e) => {
                     if (runMode) return;
@@ -1666,8 +1708,10 @@ const ControllerTab = forwardRef(function ControllerTab(
                 >
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     <div style={{ fontWeight: 600, fontSize: 12 }}>{w.name}</div>
-                    <div style={{ color: '#777', fontSize: 12 }}>every {Number(w.bindings?.everyMs ?? 1000)} ms</div>
-                    <div style={{ color: '#777', fontSize: 12 }}>{w.bindings?.onTick ? 'trigger: yes' : 'trigger: (none)'}</div>
+                    <div style={{ color: flash ? '#e3f2fd' : '#777', fontSize: 12 }}>every {everyMs} ms</div>
+                    <div style={{ color: flash ? '#e3f2fd' : '#777', fontSize: 12 }}>
+                      {w.bindings?.onTick ? 'trigger: yes' : 'trigger: (none)'}
+                    </div>
                   </div>
                 </div>
               );
