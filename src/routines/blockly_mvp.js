@@ -210,7 +210,8 @@ const defineBlocksOnce = (() => {
           .appendField(new Blockly.FieldColour('#00ff00'), 'HEX');
         this.setPreviousStatement(true);
         this.setNextStatement(true);
-        this.setColour(110);
+        // Keep this block visually distinct from JIMU "Show" blocks (same category).
+        this.setColour('#00c853');
         this.setTooltip('Controller: set indicator color.');
       },
     };
@@ -220,7 +221,8 @@ const defineBlocksOnce = (() => {
         this.appendValueInput('VALUE').appendField('display').appendField(makeControllerDropdown('display'), 'NAME').appendField('show');
         this.setPreviousStatement(true);
         this.setNextStatement(true);
-        this.setColour(110);
+        // Keep this block visually distinct from JIMU "Show" blocks (same category).
+        this.setColour('#00c853');
         this.setTooltip('Controller: show a value on a display widget.');
       },
     };
