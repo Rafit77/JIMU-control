@@ -93,8 +93,16 @@ Notes:
 - `repeat N` (`controls_repeat_ext`): run nested statements N times.
 - `while / until` (`controls_whileUntil`): loop while/until a boolean condition is met.
 - `break / continue` (`controls_flow_statements`): break out of or continue the innermost loop.
+- `routine [name]` (`jimu_routine`): run another routine as a subroutine/procedure.
 - `wait [ms]` (`jimu_wait`): delay for a duration; cancellable via Stop.
 - `wait until <condition>` (`jimu_wait_until`): polls until condition becomes true (50ms polling); cancellable via Stop.
+
+Subroutines (safety rules):
+- A routine cannot be deleted if it is referenced by another routine via `routine [name]`.
+- Recursive calls are blocked:
+  - while selecting a routine, you cannot select yourself
+  - you also cannot select any routine that (directly or indirectly) calls the current routine
+  - runtime also rejects recursion as a safety net
 
 ### Math
 - `number` (`math_number`): numeric constant.
