@@ -1364,6 +1364,9 @@ const ControllerTab = forwardRef(function ControllerTab(
           </strong>
         </span>
         <button onClick={() => setRunMode((p) => !p)}>{runMode ? 'Design' : 'Run'}</button>
+        {runMode && status !== 'Connected' && (
+          <span style={{ color: '#c62828', fontWeight: 800 }}>JIMU not connected</span>
+        )}
         <span style={{ color: '#777', fontSize: 12 }}>
           grid {GRID_PX}px | cell {Math.round(colPx * 10) / 10}×{GRID_PX} | cols {cols}
         </span>
