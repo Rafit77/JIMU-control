@@ -2437,6 +2437,8 @@ export default function App() {
                 calibration={currentProject?.data?.calibration || {}}
                 projectModules={currentProject?.data?.hardware?.modules || {}}
                 controllerData={currentProject?.data?.controller || { widgets: [] }}
+                projectRoutines={currentProject?.data?.routines}
+                onUpdateProjectData={updateCurrentProjectData}
                 routineXmlRamCacheRef={routineXmlRamCacheRef}
                 battery={battery}
                 addLog={addLog}

@@ -6,6 +6,7 @@ import 'react-resizable/css/styles.css';
 import * as controllerState from './controller_state.js';
 import { setControllerWidgetOptionsProvider, setIdOptionsProvider, xmlTextToAsyncJs } from '../routines/blockly_mvp.js';
 import { createRoutineApi } from '../routines/runtime_api.js';
+import * as globalVars from '../routines/global_vars.js';
 
 const GRID_PX = 40;
 const ROUTINE_RETRIGGER_COOLDOWN_MS = 300;
@@ -686,10 +687,11 @@ const WidgetConfig = ({ open, widget, routines, onClose, onChange, onDelete }) =
 
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 12 }}>
           <button
-            onClick={() => {
+            onClick={async () => {
               const ok = window.confirm(`Delete widget "${widget.name}"?`);
               if (!ok) return;
-              onDelete?.(widget.id);
+              const deleted = await onDelete?.(widget.id);
+              if (deleted === false) return;
               onClose();
             }}
             style={{ background: '#fff', border: '1px solid #c62828', color: '#c62828' }}
@@ -883,6 +885,67 @@ const ControllerTab = forwardRef(function ControllerTab(
   const updateWidgets = useCallback((nextWidgets) => {
     onUpdateControllerData?.((prev) => ({ ...(prev || {}), widgets: nextWidgets }));
   }, [onUpdateControllerData]);
+
+  const findRoutinesUsingWidget = useCallback(async (widget) => {
+    if (!widget?.name) return [];
+    const kind = String(widget.type || '');
+    const name = String(widget.name || '').trim();
+    if (!name) return [];
+
+    const typesByWidgetKind = {
+      slider: ['jimu_get_slider'],
+      joystick: ['jimu_get_joystick'],
+      button: ['jimu_get_button', 'jimu_get_switch'],
+      led: ['jimu_indicator_color'],
+      display: ['jimu_display_show'],
+    };
+    const blockTypes = typesByWidgetKind[kind] || [];
+    if (!blockTypes.length) return [];
+
+    const parseUses = (xmlText) => {
+      try {
+        const doc = new DOMParser().parseFromString(String(xmlText || ''), 'text/xml');
+        const blocks = Array.from(doc.getElementsByTagNameNS('*', 'block'));
+        for (const b of blocks) {
+          const t = String(b.getAttribute('type') || '');
+          if (!blockTypes.includes(t)) continue;
+          const fields = Array.from(b.getElementsByTagNameNS('*', 'field'));
+          for (const f of fields) {
+            if (String(f.getAttribute('name') || '') !== 'NAME') continue;
+            const v = String(f.textContent || '').trim();
+            if (v === name) return true;
+          }
+        }
+      } catch (_) {
+        // ignore
+      }
+      return false;
+    };
+
+    const list = Array.isArray(routines) ? routines : [];
+    const results = [];
+    for (const r of list) {
+      const rid = String(r?.id || '');
+      if (!rid) continue;
+      let xml = '';
+      try {
+        xml = String(routineXmlRamCacheRef?.current?.get?.(rid) ?? '');
+      } catch (_) {
+        xml = '';
+      }
+      if (!xml && ipc && projectId) {
+        try {
+          const res = await ipc.invoke('routine:loadXml', { projectId, routineId: rid });
+          xml = String(res?.xml || '');
+        } catch (_) {
+          xml = '';
+        }
+      }
+      if (!xml) continue;
+      if (parseUses(xml)) results.push({ id: rid, name: String(r?.name || rid) });
+    }
+    return results;
+  }, [ipc, projectId, routines, routineXmlRamCacheRef]);
 
   const setButtonUiValue = useCallback((widgetId, mode, value) => {
     const current = widgetsRef.current || [];
@@ -1091,6 +1154,11 @@ const ControllerTab = forwardRef(function ControllerTab(
   // Publish initial widget values into the controller state store when entering run mode.
   useEffect(() => {
     if (!runMode) return;
+    try {
+      globalVars.varResetToInit?.();
+    } catch (_) {
+      // ignore
+    }
     for (const w of widgets) {
       if (w.type === 'button') controllerState.switchSet(w.name, Boolean(w.props?.value));
       if (w.type === 'slider') controllerState.sliderSet(w.name, Number(w.props?.value ?? 0));
@@ -1630,9 +1698,20 @@ const ControllerTab = forwardRef(function ControllerTab(
         widget={configWidget}
         routines={routines}
         onClose={() => setConfigWidgetId('')}
-        onDelete={(id) => {
-          updateWidgets(widgets.filter((w) => String(w.id) !== String(id)));
+        onDelete={async (id) => {
+          const w = widgets.find((x) => String(x?.id) === String(id)) || null;
+          if (w) {
+            const usedBy = await findRoutinesUsingWidget(w);
+            if (usedBy.length) {
+              window.alert(
+                `Cannot delete "${w.name}" because it is used by routine(s):\n- ${usedBy.map((r) => r.name).join('\n- ')}`,
+              );
+              return false;
+            }
+          }
+          updateWidgets(widgets.filter((x) => String(x.id) !== String(id)));
           setConfigWidgetId('');
+          return true;
         }}
         onChange={(next) => {
           updateWidgets(widgets.map((w) => (w.id === next.id ? next : w)));

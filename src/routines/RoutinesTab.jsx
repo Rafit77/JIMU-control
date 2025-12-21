@@ -119,9 +119,10 @@ const RoutineNameDialog = ({ open, title, initialName, onCancel, onSubmit }) => 
   );
 };
 
-const VariablesDialog = ({ open, workspace, getVarValue, isVarUsedElsewhere, onClose }) => {
+const VariablesDialog = ({ open, workspace, getVarValue, getVarInit, setVarInit, isVarUsedElsewhere, onClose }) => {
   const [newName, setNewName] = useState('');
   const [varsVersion, bumpVarsVersion] = useState(0);
+  const [initEdits, setInitEdits] = useState({}); // varName -> string
 
   useEffect(() => {
     if (!open || !workspace) return;
@@ -144,7 +145,21 @@ const VariablesDialog = ({ open, workspace, getVarValue, isVarUsedElsewhere, onC
     return workspace.getAllVariables().map((v) => ({ id: v.getId(), name: v.name, type: v.type }));
   }, [workspace, open, varsVersion]);
 
-  if (!open) return null;
+  const parseLiteral = (raw) => {
+    const s = String(raw ?? '').trim();
+    if (!s) return 0;
+    if (s === 'true') return true;
+    if (s === 'false') return false;
+    const n = Number(s);
+    if (Number.isFinite(n)) return n;
+    return s;
+  };
+
+  const setInitFor = (varName, raw) => {
+    const name = String(varName ?? '').trim();
+    if (!name) return;
+    setVarInit?.(name, parseLiteral(raw));
+  };
 
   const formatValue = (v) => {
     if (v === undefined) return '—';
@@ -159,6 +174,20 @@ const VariablesDialog = ({ open, workspace, getVarValue, isVarUsedElsewhere, onC
       return s.length > 60 ? `${s.slice(0, 57)}...` : s;
     }
   };
+
+  useEffect(() => {
+    if (!open || !workspace) return;
+    const next = {};
+    for (const v of vars) {
+      const name = String(v?.name || '').trim();
+      if (!name) continue;
+      const initVal = getVarInit?.(name);
+      next[name] = initVal == null ? '' : String(initVal);
+    }
+    setInitEdits(next);
+  }, [open, workspace, varsVersion, vars, getVarInit]);
+
+  if (!open) return null;
 
   return (
     <div
@@ -213,6 +242,24 @@ const VariablesDialog = ({ open, workspace, getVarValue, isVarUsedElsewhere, onC
                   readOnly
                   title="Variables are global across routines; rename is disabled to keep cross-routine references stable."
                 />
+                <input
+                  style={{ width: 110, padding: 6 }}
+                  value={initEdits[String(v.name ?? '')] ?? ''}
+                  onChange={(e) =>
+                    setInitEdits((prev) => ({ ...(prev || {}), [String(v.name ?? '')]: String(e.target.value ?? '') }))
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Enter') return;
+                    const name = String(v.name ?? '');
+                    setInitFor(name, initEdits[name]);
+                    e.currentTarget.blur();
+                  }}
+                  onBlur={() => {
+                    const name = String(v.name ?? '');
+                    setInitFor(name, initEdits[name]);
+                  }}
+                  title="Init value (applied when starting a routine and when entering Controller Run mode)."
+                />
                 <span
                   style={{
                     minWidth: 220,
@@ -266,6 +313,8 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     calibration,
     projectModules,
     controllerData,
+    projectRoutines,
+    onUpdateProjectData,
     routineXmlRamCacheRef,
     battery,
     addLog,
@@ -295,11 +344,47 @@ const RoutinesTab = forwardRef(function RoutinesTab(
   const editorInitialXmlRef = useRef(''); // xml used for workspace initialization (avoids async setState ordering issues)
   const suppressDirtyRef = useRef(false);
 
+  const setRoutinesRam = useCallback(
+    (updater) => {
+      setRoutines((prev) => {
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        try {
+          onUpdateProjectData?.((d) => ({ ...(d || {}), routines: Array.isArray(next) ? next : [] }));
+        } catch (_) {
+          // ignore
+        }
+        return Array.isArray(next) ? next : [];
+      });
+    },
+    [onUpdateProjectData],
+  );
+
   const refreshList = useCallback(async () => {
-    if (!ipc || !projectId) return;
+    if (!projectId) return;
+    if (Array.isArray(projectRoutines)) {
+      setRoutines(Array.isArray(projectRoutines) ? projectRoutines : []);
+      // Preload routine XML into RAM cache so opening a routine uses RAM definition (not disk).
+      Promise.all(
+        (projectRoutines || []).map(async (r) => {
+          if (!r?.id) return;
+          const id = String(r.id);
+          if (routineXmlCacheRef.current.has(id)) return;
+          if (!ipc) return;
+          try {
+            const res = await ipc.invoke('routine:loadXml', { projectId, routineId: id });
+            routineXmlCacheRef.current.set(id, String(res?.xml || ''));
+          } catch (_) {
+            // ignore
+          }
+        }),
+      ).catch(() => {});
+      return;
+    }
+
+    if (!ipc) return;
     const list = await ipc.invoke('routine:list', { projectId });
     const safeList = Array.isArray(list) ? list : [];
-    setRoutines(safeList);
+    setRoutinesRam(safeList);
     // Preload routine XML into RAM cache so opening a routine uses RAM definition (not disk).
     // Best-effort: ignore load failures.
     Promise.all(
@@ -315,7 +400,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
         }
       }),
     ).catch(() => {});
-  }, [ipc, projectId]);
+  }, [ipc, projectId, projectRoutines, setRoutinesRam, routineXmlCacheRef]);
 
   useEffect(() => {
     // Only clear the *local* cache on project change.
@@ -327,6 +412,12 @@ const RoutinesTab = forwardRef(function RoutinesTab(
   useEffect(() => {
     refreshList().catch(() => {});
   }, [refreshList]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    if (!Array.isArray(projectRoutines)) return;
+    setRoutines(Array.isArray(projectRoutines) ? projectRoutines : []);
+  }, [projectId, projectRoutines]);
 
   useEffect(() => {
     const run = async () => {
@@ -458,13 +549,13 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     routineXmlCacheRef.current.set(String(editorRoutine.id), String(xml || ''));
     setEditorXml(String(xml || ''));
     setEditorDirty(false);
-    setRoutines((prev) =>
+    setRoutinesRam((prev) =>
       (Array.isArray(prev) ? prev : []).map((r) =>
         String(r?.id) === String(editorRoutine.id) ? { ...(r || {}), updatedAt: new Date().toISOString() } : r,
       ),
     );
     addLog?.(`Routine saved (RAM): ${editorRoutine.name}`);
-  }, [ipc, projectId, editorRoutine, editorXml, addLog]);
+  }, [ipc, projectId, editorRoutine, editorXml, addLog, setRoutinesRam]);
 
   const confirmLeaveEditor = useCallback(async () => {
     if (!editorRoutine) return true;
@@ -1149,6 +1240,12 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     if (!editorRoutine) return;
     const ws = workspaceRef.current;
     if (!ws) return;
+
+    try {
+      globalVars.varResetToInit?.();
+    } catch (_) {
+      // ignore
+    }
     bumpVarsVersion((v) => v + 1);
     try {
       ws.highlightBlock?.(null);
@@ -1255,7 +1352,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
             if (!ok) return;
             await stopRoutine();
             routineXmlCacheRef.current.delete(String(editorRoutine.id));
-            setRoutines((prev) =>
+            setRoutinesRam((prev) =>
               (Array.isArray(prev) ? prev : []).filter((r) => String(r?.id) !== String(editorRoutine.id)),
             );
             setEditorRoutine(null);
@@ -1334,7 +1431,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
                       const ok = window.confirm(`Delete routine "${r.name}"?`);
                       if (!ok) return;
                       routineXmlCacheRef.current.delete(String(r.id));
-                      setRoutines((prev) => (Array.isArray(prev) ? prev : []).filter((x) => String(x?.id) !== String(r.id)));
+                      setRoutinesRam((prev) => (Array.isArray(prev) ? prev : []).filter((x) => String(x?.id) !== String(r.id)));
                       if (editorRoutine?.id === r.id) {
                         await stopRoutine();
                         setEditorRoutine(null);
@@ -1387,6 +1484,8 @@ const RoutinesTab = forwardRef(function RoutinesTab(
             open={varsOpen}
             workspace={workspaceRef.current}
             getVarValue={(varName) => globalVars.varGet(String(varName ?? ''))}
+            getVarInit={(varName) => globalVars.varInitGet?.(String(varName ?? ''))}
+            setVarInit={(varName, initValue) => globalVars.varInitSet?.(String(varName ?? ''), initValue)}
             isVarUsedElsewhere={(varName) => varsUsedElsewhere.has(String(varName ?? '').trim())}
             onClose={() => setVarsOpen(false)}
           />
@@ -1411,7 +1510,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
               const routine = { id, name: routineName, createdAt: now, updatedAt: now };
               routineXmlCacheRef.current.set(String(id), defaultRoutineXml);
               editorInitialXmlRef.current = defaultRoutineXml;
-              setRoutines((prev) => [...(Array.isArray(prev) ? prev : []), routine]);
+              setRoutinesRam((prev) => [...(Array.isArray(prev) ? prev : []), routine]);
               setEditorXml(defaultRoutineXml);
               setEditorRoutine({ id, name: routineName });
               setEditorDirty(false);
@@ -1427,7 +1526,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
                   .map((r) => String(r?.name || '')),
               );
               if (existingNames.has(routineName)) throw new Error('Routine name must be unique');
-              setRoutines((prev) =>
+              setRoutinesRam((prev) =>
                 (Array.isArray(prev) ? prev : []).map((r) =>
                   String(r?.id) === String(nameDialog.routineId)
                     ? { ...(r || {}), name: routineName, updatedAt: new Date().toISOString() }

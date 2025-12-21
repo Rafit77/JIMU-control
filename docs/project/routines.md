@@ -21,6 +21,9 @@ Notes:
 ## Runtime load/save model (RAM vs disk)
 When a project is open, the app keeps a **RAM project state**. Disk (`jimu_saves/<projectId>/...`) is only persistence.
 
+Important implementation note:
+- All project-state data (routines list, routine XML cache, variables, controller layout, and future features like **Actions**) must be owned by the **App-level RAM state** (top-level store), not tab-local component state. Tab switches, reconnect flows, or UI remounts must never drop or reload RAM-only edits from disk unless the user explicitly opens a project or saves a project.
+
 Required behavior:
 - **Project Open** loads `project.json` into RAM (including calibration, routines list, and `variables`).
 - The Routines tab preloads each routine XML into a RAM cache (best-effort).

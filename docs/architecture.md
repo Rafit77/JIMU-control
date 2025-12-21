@@ -30,6 +30,7 @@ flowchart LR
 - **One device API**: UI and runtime never touch BLE directly; everything goes through `jimu/`.
 - **Non-blocking execution**: multiple actions can run in parallel (timers + triggers) without freezing UI.
 - **Command pacing**: BLE writes must be throttled and notification parsing must handle concatenated frames.
+- **RAM-first project state**: all user-editable project data must be stored in an App-level RAM state (not tab-local state) and only persisted to disk on explicit Project Save.
 
 ## Repository pointers
 - SDK / device access: `jimu/jimu.js`, `jimu/jimu_ble.js`
