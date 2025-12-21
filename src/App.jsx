@@ -249,6 +249,10 @@ export default function App() {
   const [sensorError, setSensorError] = useState(null); // string|null
   const [isScanning, setIsScanning] = useState(false);
   const [verboseFrames, setVerboseFrames] = useState(false);
+  const [idChange, setIdChange] = useState({ module: 'servo', fromId: 0, toId: 1 });
+  const [idChangeError, setIdChangeError] = useState(null);
+  const [isChangingId, setIsChangingId] = useState(false);
+  const [idChangeOpen, setIdChangeOpen] = useState(false);
   const [projectDialog, setProjectDialog] = useState({
     open: false,
     mode: 'new', // new | saveAs | edit
@@ -290,6 +294,23 @@ export default function App() {
   const listMask = (arr) => (arr && arr.length ? arr.join(', ') : 'none');
   const hasProject = Boolean(currentProject?.id);
   const isConnected = status === 'Connected';
+  const idChangeMax = idChange.module === 'servo' ? 32 : 8;
+  const idChangeDetectedIds = useMemo(() => {
+    const kind = String(idChange.module || '').toLowerCase();
+    const map = {
+      servo: modules?.servos,
+      motor: modules?.motors,
+      ir: modules?.ir,
+      ultrasonic: modules?.ultrasonic,
+      eye: modules?.eyes,
+      speaker: modules?.speakers,
+    };
+    const raw = map[kind] || [];
+    return Array.from(new Set((Array.isArray(raw) ? raw : []).map(Number).filter((n) => Number.isFinite(n) && n > 0))).sort(
+      (a, b) => a - b,
+    );
+  }, [modules, idChange.module]);
+  const idChangeFromOptions = useMemo(() => [0, ...idChangeDetectedIds], [idChangeDetectedIds]);
   const updateCurrentProjectData = useCallback((updater) => {
     setCurrentProject((prev) => {
       if (!prev) return prev;
@@ -675,6 +696,12 @@ export default function App() {
       if (data.ok) return;
       addLog(`Command failed cmd=0x${(data.cmd ?? 0).toString(16)} status=${data.status}`);
     };
+    const onTx = (_e, data) => {
+      if (!verboseFrames) return;
+      const cmd = data?.meta?.cmd ?? data?.cmd;
+      const hex = payloadToHex(data?.payload);
+      addLog(`=> cmd=0x${(cmd ?? 0).toString(16)} ${hex}`);
+    };
     const onFrame = (_e, data) => {
       if (!verboseFrames) return;
       const cmd = data?.meta?.cmd ?? data?.cmd;
@@ -707,6 +734,7 @@ export default function App() {
     ipc.on('jimu:errorReport', onErrorReport);
     ipc.on('jimu:transportError', onTransportError);
     ipc.on('jimu:commandResult', onCommandResult);
+    ipc.on('jimu:tx', onTx);
     ipc.on('jimu:frame', onFrame);
     ipc.on('jimu:sensor', onSensor);
     return () => {
@@ -723,6 +751,7 @@ export default function App() {
       ipc.removeListener('jimu:errorReport', onErrorReport);
       ipc.removeListener('jimu:transportError', onTransportError);
       ipc.removeListener('jimu:commandResult', onCommandResult);
+      ipc.removeListener('jimu:tx', onTx);
       ipc.removeListener('jimu:frame', onFrame);
       ipc.removeListener('jimu:sensor', onSensor);
     };
@@ -1251,6 +1280,16 @@ export default function App() {
                       {status}
                     </span>
                   </span>
+                  <div style={{ marginLeft: 'auto' }} />
+                  <button
+                    disabled={!ipc}
+                    onClick={() => {
+                      setIdChangeError(null);
+                      setIdChangeOpen(true);
+                    }}
+                  >
+                    Change ID
+                  </button>
                 </div>
                 <div style={{ marginTop: 8 }}>
                   <strong>Firmware:</strong> {firmware}
@@ -1259,6 +1298,152 @@ export default function App() {
                   {battery ? `${battery.volts.toFixed(3)}V ${battery.charging ? '(charging)' : ''}` : 'n/a'}
                 </div>
               </Section>
+
+              {idChangeOpen && (
+                <div
+                  style={{
+                    position: 'fixed',
+                    inset: 0,
+                    background: 'rgba(0,0,0,0.35)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 9999,
+                    padding: 16,
+                  }}
+                  onMouseDown={() => setIdChangeOpen(false)}
+                >
+                  <div
+                    style={{
+                      width: 'min(780px, 100%)',
+                      background: '#fff',
+                      borderRadius: 10,
+                      border: '1px solid #ddd',
+                      boxShadow: '0 10px 40px rgba(0,0,0,0.25)',
+                      padding: 14,
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                      <div style={{ fontWeight: 800, fontSize: 14 }}>Change module ID</div>
+                      <button onClick={() => setIdChangeOpen(false)}>Cancel</button>
+                    </div>
+
+                    <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <span style={{ fontSize: 12, color: '#555' }}>Module</span>
+                        <select
+                          value={idChange.module}
+                          onChange={(e) => {
+                            const next = String(e.target.value || 'servo');
+                            setIdChange({ module: next, fromId: 0, toId: 1 });
+                            setIdChangeError(null);
+                          }}
+                        >
+                          <option value="servo">Servo</option>
+                          <option value="motor">Motor</option>
+                          <option value="ir">IR</option>
+                          <option value="ultrasonic">Ultrasonic</option>
+                          <option value="eye">Eye</option>
+                          <option value="speaker">Speaker</option>
+                        </select>
+                      </label>
+
+                      <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <span style={{ fontSize: 12, color: '#555' }}>From ID</span>
+                        <select
+                          value={String(idChange.fromId)}
+                          onChange={(e) => {
+                            const next = Number(e.target.value);
+                            setIdChange((prev) => ({ ...prev, fromId: Number.isFinite(next) ? next : 0 }));
+                            setIdChangeError(null);
+                          }}
+                        >
+                          {idChangeFromOptions.map((id) => (
+                            <option key={`from-${id}`} value={String(id)}>
+                              {id === 0 ? '0 (fix)' : String(id)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <span style={{ fontSize: 12, color: '#555' }}>To ID</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={idChangeMax}
+                          value={idChange.toId}
+                          onChange={(e) => {
+                            const next = Number(e.target.value);
+                            setIdChange((prev) => ({ ...prev, toId: Number.isFinite(next) ? next : 1 }));
+                            setIdChangeError(null);
+                          }}
+                          style={{ width: 88 }}
+                        />
+                        <span style={{ fontSize: 12, color: '#777' }}>(1..{idChangeMax})</span>
+                      </label>
+
+                      <button
+                        disabled={!isConnected || !ipc || isChangingId}
+                        onClick={async () => {
+                          if (!ipc) return;
+                          if (!isConnected) return setIdChangeError('Connect to a brick first');
+
+                          const kind = String(idChange.module || '').toLowerCase();
+                          const max = kind === 'servo' ? 32 : 8;
+                          const fromId = Math.max(0, Math.min(max, Math.round(Number(idChange.fromId))));
+                          const toId = Math.max(1, Math.min(max, Math.round(Number(idChange.toId))));
+                          if (!Number.isFinite(fromId) || !Number.isFinite(toId)) {
+                            setIdChangeError('Invalid ID values');
+                            return;
+                          }
+                          if (kind === 'servo' && (toId < 1 || toId > 32)) {
+                            setIdChangeError('Servo ID must be 1..32');
+                            return;
+                          }
+                          if (kind !== 'servo' && (toId < 1 || toId > 8)) {
+                            setIdChangeError('Peripheral ID must be 1..8');
+                            return;
+                          }
+
+                          setIsChangingId(true);
+                          setIdChangeError(null);
+                          try {
+                            await closeServoPanel();
+                            await closeMotorPanel();
+                            await closeEyePanel();
+                            await turnOffUltrasonicLeds(modules?.ultrasonic);
+                            setIrPanel({ open: false, live: false });
+                            setUsPanel((prev) => ({ ...prev, open: false, live: false }));
+                            setSensorError(null);
+
+                            await ipc.invoke('jimu:changeModuleId', { module: kind, fromId, toId });
+                            addLog(`Changed ${kind} ID: ${fromId} -> ${toId}`);
+                            setIdChange((prev) => ({ ...prev, fromId: toId }));
+
+                            const s = await ipc.invoke('jimu:refreshStatus');
+                            setModules(s || null);
+                          } catch (e) {
+                            const msg = e?.message || String(e);
+                            setIdChangeError(msg);
+                            addLog(`Change ID failed: ${msg}`);
+                          } finally {
+                            setIsChangingId(false);
+                          }
+                        }}
+                      >
+                        {isChangingId ? 'Changing...' : 'Change ID'}
+                      </button>
+                    </div>
+
+                    {idChangeError && <div style={{ marginTop: 10, color: '#c62828' }}>{idChangeError}</div>}
+                    <div style={{ marginTop: 10, fontSize: 12, color: '#666' }}>
+                      Requires an active connection. After changing the ID, the app refreshes status to rescan detected modules.
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <Section title="Model Config (live overview)">
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 12 }}>

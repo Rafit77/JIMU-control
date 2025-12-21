@@ -176,7 +176,8 @@ export const createRoutineApi = ({
     const cleanSpeed = clamp(Number(speed ?? 0), -maxSpeed, maxSpeed);
     const finalSpeed = reverse ? -cleanSpeed : cleanSpeed;
     const dur = clamp(Number(durationMs ?? 5000), 0, 6000);
-    await ipc.invoke('jimu:rotateMotor', { id: motorId, speed: finalSpeed, durationMs: dur });
+    // Use signed motor API (Controller tab runs routines without the RoutinesTab helpers).
+    await ipc.invoke('jimu:rotateMotorSigned', { id: motorId, speed: finalSpeed, maxSpeed, durationMs: dur });
   };
 
   const rotateMotorsTimed = async (entries, durationMs = 5000) => {
@@ -200,8 +201,15 @@ export const createRoutineApi = ({
     }
     const ids = Array.from(byId.keys()).sort((a, b) => a - b);
     if (!ids.length) return;
-    const speeds = ids.map((id) => byId.get(id));
-    await ipc.invoke('jimu:rotateMotorMulti', { ids, speeds, durationMs: dur });
+
+    // Send per-motor to respect single-flight constraints and avoid missing IPC handlers.
+    for (const motorId of ids) {
+      if (isCancelled()) return;
+      const c = cfg?.[motorId] || cfg?.[String(motorId)] || {};
+      const maxSpeed = typeof c.maxSpeed === 'number' ? c.maxSpeed : 150;
+      const signed = clamp(Number(byId.get(motorId) ?? 0), -maxSpeed, maxSpeed);
+      await ipc.invoke('jimu:rotateMotorSigned', { id: motorId, speed: signed, maxSpeed, durationMs: dur });
+    }
   };
 
   const stopMotor = async (id) => rotateMotor(id, 0, 0);

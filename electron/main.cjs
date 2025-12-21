@@ -447,6 +447,7 @@ const attachJimuEvents = () => {
   jimu.on('battery', (battery) => sendToRenderer('jimu:battery', battery));
   jimu.on('disconnect', () => sendToRenderer('jimu:disconnected'));
   jimu.on('servoPosition', (pos) => sendToRenderer('jimu:servoPos', pos));
+  jimu.on('tx', (frame) => sendToRenderer('jimu:tx', frame));
   jimu.on('frame', (frame) => sendToRenderer('jimu:frame', frame));
   jimu.on('sensor', (evt) => sendToRenderer('jimu:sensor', evt));
   jimu.on('commandResult', (evt) => sendToRenderer('jimu:commandResult', evt));
@@ -552,6 +553,34 @@ const registerIpc = () => {
   });
   ipcMain.handle('jimu:refreshStatus', async () => {
     return jimu.refreshStatus();
+  });
+  ipcMain.handle('jimu:changeModuleId', async (_evt, { module, fromId, toId } = {}) => {
+    const kind = String(module || '').toLowerCase();
+    const safeFrom = Number.isFinite(Number(fromId)) ? Number(fromId) : null;
+    const safeTo = Number.isFinite(Number(toId)) ? Number(toId) : null;
+    if (!kind) throw new Error('module is required');
+    if (safeFrom === null || safeTo === null) throw new Error('fromId/toId must be numbers');
+
+    if (kind === 'servo') {
+      if (safeFrom < 0 || safeFrom > 32) throw new Error('servo fromId must be 0..32');
+      if (safeTo < 1 || safeTo > 32) throw new Error('servo toId must be 1..32');
+      await jimu.changeServoId(safeFrom, safeTo);
+      return { ok: true };
+    }
+
+    const peripheralTypes = {
+      ir: 0x01,
+      eye: 0x04,
+      ultrasonic: 0x06,
+      motor: 0x0a,
+      speaker: 0x08,
+    };
+    const type = peripheralTypes[kind];
+    if (!type) throw new Error(`Unknown module type: ${kind}`);
+    if (safeFrom < 0 || safeFrom > 8) throw new Error(`${kind} fromId must be 0..8`);
+    if (safeTo < 1 || safeTo > 8) throw new Error(`${kind} toId must be 1..8`);
+    await jimu.changePeripheralId({ type, fromId: safeFrom, toId: safeTo });
+    return { ok: true };
   });
   ipcMain.handle('jimu:enable', async () => {
     return jimu.enableDetected();

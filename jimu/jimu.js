@@ -365,6 +365,12 @@ export class Jimu extends EventEmitter {
       const now = Date.now();
       const waitMs = Math.max(0, (this.commandSpacingMs ?? 0) - (now - this._lastSendAt));
       if (waitMs) await sleep(waitMs);
+      try {
+        const cmd = payload?.[0];
+        this.emit('tx', { payload: Buffer.from(payload || []), cmd, meta: { cmd } });
+      } catch (_) {
+        // ignore logging issues; never block device writes
+      }
       const res = await this.client.send(payload);
       this._lastSendAt = Date.now();
       const cmd = payload?.[0];
