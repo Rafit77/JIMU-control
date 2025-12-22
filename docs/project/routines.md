@@ -96,6 +96,8 @@ Notes:
 - `routine [name]` (`jimu_routine`): run another routine as a subroutine/procedure.
 - `wait [ms]` (`jimu_wait`): delay for a duration; cancellable via Stop.
 - `wait until <condition>` (`jimu_wait_until`): polls until condition becomes true (50ms polling); cancellable via Stop.
+- `stop action [name]` (`jimu_stop_action`): requests stopping a running Action (best effort; stops before the next frame).
+- `stop all actions` (`jimu_stop_all_actions`): requests stopping all running Actions (best effort; stops before the next frame).
 
 Subroutines (safety rules):
 - A routine cannot be deleted if it is referenced by another routine via `routine [name]`.
@@ -158,7 +160,7 @@ Variables dialog rules:
   - Mutator block: add/remove motor rows; each motor has its own speed; duration is shared.
 - `stop motor` (`jimu_stop_motor`)
   - Mutator block: add/remove motor ID rows (IDs must be distinct).
-- `action [name]` (`jimu_select_action`): play an Action (pose sequence) selected from the project Actions list.
+- `action [name]` (`jimu_select_action`): play an Action (pose sequence) selected from the project Actions list (ignored if that Action is already running).
 - `emergency stop` (`jimu_emergency_stop`): immediate stop + cancels the routine run.
 
 ### Show

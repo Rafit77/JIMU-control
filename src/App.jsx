@@ -1183,8 +1183,10 @@ export default function App() {
                 if (!ipc) return;
                 try {
                   await routinesRef.current?.stopIfRunning?.();
+                  await routinesRef.current?.stopAllActions?.();
                   await actionsRef.current?.stopIfRunning?.();
                   await controllerRef.current?.stopAllRoutines?.();
+                  await controllerRef.current?.stopAllActions?.();
                   await ipc.invoke('jimu:emergencyStop');
                   addLog('Emergency stop issued');
                 } catch (e) {

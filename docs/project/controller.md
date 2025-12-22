@@ -144,6 +144,7 @@ Suggested MVP bindings:
   - optional gamepad button shortcut
   - onPress → start selected routine
   - onRelease → start selected routine
+  - onRelease → start selected Action
 - Switch:
   - publish live value
   - onOn → start selected routine
@@ -159,6 +160,7 @@ Suggested MVP bindings:
   - on value change → start selected routine
 - Timer trigger:
   - every N ms → start selected routine
+  - every N ms → start selected Action
 - Keyboard/gamepad:
   - map a key/button/axis to a widget or directly to a routine trigger
 
@@ -171,6 +173,11 @@ Each widget:
 - layout: `x,y,w,h` (grid units)
 - props: type-specific config (min/max, colors, labels)
 - bindings: list of triggers → routine ids
+
+## Actions in Controller (Milestone 5)
+- Only **Button** and **Timer** widgets can trigger Actions.
+- Button Actions are triggered on **release**.
+- If the selected Action is already running, triggering it again is ignored.
 
 ## Open questions
 - Grid resolution:

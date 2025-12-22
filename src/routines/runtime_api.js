@@ -63,6 +63,7 @@ export const createRoutineApi = ({
   projectModules,
   projectActions,
   actionJsonRamCacheRef,
+  actionsRuntimeRef,
   battery,
   addLog,
   appendTrace,
@@ -90,6 +91,13 @@ export const createRoutineApi = ({
   };
 
   const actionJsonCacheRef = actionJsonRamCacheRef || { current: new Map() }; // actionId -> json
+  const localActionsRuntime = { running: new Map() }; // actionId -> { stopRequested }
+  const getActionsRuntime = () => {
+    const cur = actionsRuntimeRef?.current ?? actionsRuntimeRef;
+    if (cur?.running instanceof Map) return cur;
+    if (cur instanceof Map) return { running: cur };
+    return localActionsRuntime;
+  };
 
   const servoSpeedByteFromDurationMs = (durationMs) => {
     const ms = clamp(Number(durationMs ?? 400), 0, 60_000);
@@ -302,26 +310,65 @@ export const createRoutineApi = ({
     }
   };
 
+  const stopAction = (actionId) => {
+    const id = String(actionId || '').trim();
+    if (!id) return;
+    try {
+      const rt = getActionsRuntime();
+      const v = rt.running.get(id);
+      if (v && typeof v === 'object') v.stopRequested = true;
+    } catch (_) {
+      // ignore
+    }
+  };
+
+  const stopAllActions = () => {
+    try {
+      const rt = getActionsRuntime();
+      for (const v of rt.running.values()) {
+        if (v && typeof v === 'object') v.stopRequested = true;
+      }
+    } catch (_) {
+      // ignore
+    }
+  };
+
   const playAction = async (actionId) => {
     const id = String(actionId || '').trim();
     if (!id) return;
     if (!ipc) throw new Error('IPC unavailable');
     if (isCancelled()) return;
 
+    const rt = getActionsRuntime();
+    if (rt.running.has(id)) return; // ignore if already running
+    const run = { stopRequested: false };
+    rt.running.set(id, run);
+
     const meta = (Array.isArray(projectActions) ? projectActions : []).find((a) => String(a?.id) === id) || null;
     const action = (await loadActionJson(id)) || null;
     const servoIds = (meta?.servoIds || action?.servoIds || []).map(Number).filter((n) => Number.isFinite(n) && n > 0);
     const frames = Array.isArray(action?.frames) ? action.frames : [];
-    if (!frames.length) return;
+    if (!frames.length) {
+      rt.running.delete(id);
+      return;
+    }
 
-    for (const f of frames) {
-      if (isCancelled()) return;
-      const durationMs = clamp(Number(f?.durationMs ?? 400), ACTION_FRAME_MIN_MS, ACTION_FRAME_MAX_MS);
-      const poseDeg = f?.poseDeg && typeof f.poseDeg === 'object' ? f.poseDeg : {};
-      const entries = servoIds
-        .map((sid) => ({ id: sid, deg: poseDeg[String(sid)] }))
-        .filter((e) => typeof e.deg === 'number' && Number.isFinite(e.deg));
-      await setServoPositionsTimed(entries, durationMs);
+    try {
+      for (const f of frames) {
+        if (isCancelled()) {
+          run.stopRequested = true;
+          return;
+        }
+        if (run.stopRequested) return;
+        const durationMs = clamp(Number(f?.durationMs ?? 400), ACTION_FRAME_MIN_MS, ACTION_FRAME_MAX_MS);
+        const poseDeg = f?.poseDeg && typeof f.poseDeg === 'object' ? f.poseDeg : {};
+        const entries = servoIds
+          .map((sid) => ({ id: sid, deg: poseDeg[String(sid)] }))
+          .filter((e) => typeof e.deg === 'number' && Number.isFinite(e.deg));
+        await setServoPositionsTimed(entries, durationMs);
+      }
+    } finally {
+      rt.running.delete(id);
     }
   };
 
@@ -444,6 +491,7 @@ export const createRoutineApi = ({
   const emergencyStop = async () => {
     if (!ipc) throw new Error('IPC unavailable');
     cancel.current.isCancelled = true;
+    stopAllActions();
     try {
       await allStop();
     } catch (_) {
@@ -511,6 +559,8 @@ export const createRoutineApi = ({
     getSwitch,
     selectAction,
     playAction,
+    stopAction,
+    stopAllActions,
     eyeColorMask,
     eyeColorForMask,
     eyeSceneMask,

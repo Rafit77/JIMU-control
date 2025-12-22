@@ -259,6 +259,26 @@ const defineBlocksOnce = (() => {
       },
     };
 
+    Blockly.Blocks.jimu_stop_action = {
+      init() {
+        this.appendDummyInput().appendField('stop action').appendField(makeActionDropdown(), 'NAME');
+        this.setPreviousStatement(true, null);
+        this.setNextStatement(true, null);
+        this.setColour(230);
+        this.setTooltip('Stop a running Action (best effort; stops before the next frame).');
+      },
+    };
+
+    Blockly.Blocks.jimu_stop_all_actions = {
+      init() {
+        this.appendDummyInput().appendField('stop all actions');
+        this.setPreviousStatement(true, null);
+        this.setNextStatement(true, null);
+        this.setColour(230);
+        this.setTooltip('Stop all running Actions (best effort; stops before the next frame).');
+      },
+    };
+
     // Back-compat: old type name.
     Blockly.Blocks.jimu_get_switch = {
       init() {
@@ -1378,6 +1398,14 @@ const defineBlocksOnce = (() => {
       if (!actionId) return '';
       return `await api.playAction(${JSON.stringify(actionId)});\n`;
     };
+    javascriptGenerator.forBlock.jimu_stop_action = (block) => {
+      const actionId = String(block.getFieldValue('NAME') || '');
+      if (!actionId) return '';
+      return `await api.stopAction(${JSON.stringify(actionId)});\n`;
+    };
+    javascriptGenerator.forBlock.jimu_stop_all_actions = () => {
+      return 'await api.stopAllActions();\n';
+    };
     javascriptGenerator.forBlock.jimu_eye_color = (block) => {
       const hex = String(block.getFieldValue('HEX') || '#000000');
       let eyesMask = 0;
@@ -1484,6 +1512,8 @@ export const getBlocklyToolbox = () => {
             type: 'jimu_wait_until',
             inputs: { COND: { shadow: { type: 'logic_boolean', fields: { BOOL: 'TRUE' } } } },
           },
+          { kind: 'block', type: 'jimu_stop_action' },
+          { kind: 'block', type: 'jimu_stop_all_actions' },
         ],
       },
       {

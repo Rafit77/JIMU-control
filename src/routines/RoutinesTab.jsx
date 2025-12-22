@@ -424,6 +424,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
   const routineXmlCacheRef = routineXmlRamCacheRef || localRoutineXmlCacheRef; // routineId -> xml (RAM-only until project save)
   const localActionJsonCacheRef = useRef(new Map());
   const actionJsonCacheRef = actionJsonRamCacheRef || localActionJsonCacheRef; // actionId -> json (RAM-only until project save)
+  const actionsRuntimeRef = useRef(new Map()); // actionId -> { stopRequested }
   const editorInitialXmlRef = useRef(''); // xml used for workspace initialization (avoids async setState ordering issues)
   const suppressDirtyRef = useRef(false);
 
@@ -498,6 +499,10 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     if (actionJsonRamCacheRef) return;
     actionJsonCacheRef.current.clear();
   }, [projectId, actionJsonRamCacheRef]);
+
+  useEffect(() => {
+    actionsRuntimeRef.current.clear();
+  }, [projectId]);
 
   useEffect(() => {
     refreshList().catch(() => {});
@@ -713,6 +718,15 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       confirmCanLeave: () => confirmLeaveEditor(),
       stopIfRunning: async () => {
         if (runState === 'running') await cancelRef.current.cancel?.();
+      },
+      stopAllActions: async () => {
+        try {
+          for (const v of actionsRuntimeRef.current.values()) {
+            if (v && typeof v === 'object') v.stopRequested = true;
+          }
+        } catch (_) {
+          // ignore
+        }
       },
       exportForSave: async () => {
         const list = Array.isArray(routines) ? routines : [];
@@ -1151,26 +1165,62 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       }
     };
 
+    const stopAction = (actionId) => {
+      const id = String(actionId || '').trim();
+      if (!id) return;
+      try {
+        const v = actionsRuntimeRef.current.get(id);
+        if (v && typeof v === 'object') v.stopRequested = true;
+      } catch (_) {
+        // ignore
+      }
+    };
+
+    const stopAllActions = () => {
+      try {
+        for (const v of actionsRuntimeRef.current.values()) {
+          if (v && typeof v === 'object') v.stopRequested = true;
+        }
+      } catch (_) {
+        // ignore
+      }
+    };
+
     const playAction = async (actionId) => {
       const id = String(actionId || '').trim();
       if (!id) return;
       if (!ipc) throw new Error('IPC unavailable');
       if (isCancelled()) return;
 
+      if (actionsRuntimeRef.current.has(id)) return; // ignore if already running
+      const run = { stopRequested: false };
+      actionsRuntimeRef.current.set(id, run);
+
       const meta = (Array.isArray(projectActions) ? projectActions : []).find((a) => String(a?.id) === id) || null;
       const action = (await loadActionJson(id)) || null;
       const servoIds = (meta?.servoIds || action?.servoIds || []).map(Number).filter((n) => Number.isFinite(n) && n > 0);
       const frames = Array.isArray(action?.frames) ? action.frames : [];
-      if (!frames.length) return;
+      if (!frames.length) {
+        actionsRuntimeRef.current.delete(id);
+        return;
+      }
 
-      for (const f of frames) {
-        if (isCancelled()) return;
-        const durationMs = clamp(Number(f?.durationMs ?? 400), 50, 5000);
-        const poseDeg = f?.poseDeg && typeof f.poseDeg === 'object' ? f.poseDeg : {};
-        const entries = servoIds
-          .map((sid) => ({ id: sid, deg: poseDeg[String(sid)] }))
-          .filter((e) => typeof e.deg === 'number' && Number.isFinite(e.deg));
-        await setServoPositionsTimed(entries, durationMs);
+      try {
+        for (const f of frames) {
+          if (isCancelled()) {
+            run.stopRequested = true;
+            return;
+          }
+          if (run.stopRequested) return;
+          const durationMs = clamp(Number(f?.durationMs ?? 400), 50, 5000);
+          const poseDeg = f?.poseDeg && typeof f.poseDeg === 'object' ? f.poseDeg : {};
+          const entries = servoIds
+            .map((sid) => ({ id: sid, deg: poseDeg[String(sid)] }))
+            .filter((e) => typeof e.deg === 'number' && Number.isFinite(e.deg));
+          await setServoPositionsTimed(entries, durationMs);
+        }
+      } finally {
+        actionsRuntimeRef.current.delete(id);
       }
     };
 
@@ -1309,6 +1359,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     const emergencyStop = async () => {
       if (!ipc) throw new Error('IPC unavailable');
       cancelRef.current.isCancelled = true;
+      stopAllActions();
       try {
         await allStop();
       } catch (_) {
@@ -1368,6 +1419,8 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       getSwitch,
       playAction,
       selectAction,
+      stopAction,
+      stopAllActions,
       eyeColorMask,
       eyeColorForMask,
       eyeSceneMask,

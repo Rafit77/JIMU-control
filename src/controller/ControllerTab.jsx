@@ -127,19 +127,19 @@ const defaultWidget = (type, widgets) => {
               : {},
     bindings:
       type === 'button'
-        ? { onPress: '', onRelease: '', key: '', gamepad: { index: 0, button: -1 } }
+        ? { onPress: '', onRelease: '', onReleaseAction: '', key: '', gamepad: { index: 0, button: -1 } }
       : type === 'slider'
           ? { onChange: '', keyUp: '', keyDown: '', gamepad: { index: 0, buttonUp: -1, buttonDown: -1 } }
           : type === 'joystick'
             ? { onChange: '', gamepad: { index: 0, axisX: -1, axisY: -1 } }
             : type === 'timer'
-              ? { everyMs: 1000, onTick: '' }
+              ? { everyMs: 1000, onTick: '', onTickAction: '' }
               : {},
   };
   return widget;
 };
 
-const WidgetConfig = ({ open, widget, routines, onClose, onChange, onDelete }) => {
+const WidgetConfig = ({ open, widget, routines, actions, onClose, onChange, onDelete }) => {
   const widgetRef = useRef(widget);
   useEffect(() => {
     widgetRef.current = widget;
@@ -148,6 +148,14 @@ const WidgetConfig = ({ open, widget, routines, onClose, onChange, onDelete }) =
   const routineOptions = useMemo(
     () => [{ id: '', name: '(none)' }, ...(Array.isArray(routines) ? routines : [])],
     [routines],
+  );
+
+  const actionOptions = useMemo(
+    () =>
+      [{ id: '', name: '(none)' }, ...(Array.isArray(actions) ? actions : [])]
+        .map((a) => ({ id: String(a?.id || ''), name: String(a?.name || a?.id || '') }))
+        .filter((a) => a.id || a.name),
+    [actions],
   );
 
   const setField = useCallback(
@@ -928,6 +936,20 @@ const WidgetConfig = ({ open, widget, routines, onClose, onChange, onDelete }) =
                   ))}
                 </select>
               </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                onRelease ƒÅ' action
+                <select
+                  value={widget.bindings?.onReleaseAction || ''}
+                  onChange={(e) => setField(['bindings', 'onReleaseAction'], e.target.value)}
+                  style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }}
+                >
+                  {actionOptions.map((a) => (
+                    <option key={`ra-${a.id}`} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
           ) : null}
 
@@ -949,7 +971,8 @@ const WidgetConfig = ({ open, widget, routines, onClose, onChange, onDelete }) =
           ) : null}
 
           {widget.type === 'timer' ? (
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, maxWidth: 260 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 260 }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               on tick → routine
               <select
                 value={widget.bindings?.onTick || ''}
@@ -963,6 +986,21 @@ const WidgetConfig = ({ open, widget, routines, onClose, onChange, onDelete }) =
                 ))}
               </select>
             </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              on tick ƒÅ' action
+              <select
+                value={widget.bindings?.onTickAction || ''}
+                onChange={(e) => setField(['bindings', 'onTickAction'], e.target.value)}
+                style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }}
+              >
+                {actionOptions.map((a) => (
+                  <option key={`ta-${a.id}`} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            </div>
           ) : null}
         </div>
 
@@ -1151,6 +1189,7 @@ const ControllerTab = forwardRef(function ControllerTab(
 
   const runningRef = useRef(new Map()); // routineId -> { cancelRef }
   const lastStartRef = useRef(new Map()); // routineId -> ts
+  const actionsRuntimeRef = useRef({ running: new Map() }); // actionId -> { stopRequested }
   const widgetsRef = useRef(widgets);
   const prevButtonsRef = useRef(new Map()); // widgetId -> bool
   const prevJoyRef = useRef(new Map()); // widgetId -> {x,y}
@@ -1274,6 +1313,7 @@ const ControllerTab = forwardRef(function ControllerTab(
           projectModules,
           projectActions: Array.isArray(actions) ? actions : [],
           actionJsonRamCacheRef,
+          actionsRuntimeRef,
           battery,
           // Important: don't pass addLog here, otherwise api.log() writes twice:
           // once via appendTrace and once via addLog.
@@ -1500,8 +1540,44 @@ const ControllerTab = forwardRef(function ControllerTab(
         }
         runningRef.current.clear();
       },
+      stopAllActions: async () => {
+        try {
+          const m = actionsRuntimeRef.current?.running;
+          if (!(m instanceof Map)) return;
+          for (const v of m.values()) {
+            if (v && typeof v === 'object') v.stopRequested = true;
+          }
+        } catch (_) {
+          // ignore
+        }
+      },
     }),
     [],
+  );
+
+  const playActionFromTrigger = useCallback(
+    async (actionId) => {
+      const id = String(actionId || '').trim();
+      if (!id) return;
+      if (!ipc || !projectId) return;
+      const api = createRoutineApi({
+        ipc,
+        projectId,
+        calibration,
+        projectModules,
+        projectActions: Array.isArray(actions) ? actions : [],
+        actionJsonRamCacheRef,
+        actionsRuntimeRef,
+        battery,
+        addLog: null,
+        appendTrace: (t) => addLog?.(`[Controller] ${String(t ?? '')}`),
+        cancelRef: { current: { isCancelled: false, onCancel: null } },
+        getWorkspace: () => null,
+        stepDelayMs: 0,
+      });
+      await api.playAction(id);
+    },
+    [ipc, projectId, calibration, projectModules, actions, battery, addLog, actionJsonRamCacheRef],
   );
 
   // Timer triggers
@@ -1516,16 +1592,18 @@ const ControllerTab = forwardRef(function ControllerTab(
         60_000,
       );
       const rid = String(w.bindings?.onTick || '');
-      if (!rid) continue;
+      const aid = String(w.bindings?.onTickAction || '');
+      if (!rid && !aid) continue;
       const wid = String(w.id);
       const t = setInterval(() => {
         flashTimer(wid);
-        startRoutine(rid).catch(() => {});
+        if (rid) startRoutine(rid).catch(() => {});
+        if (aid) playActionFromTrigger(aid).catch(() => {});
       }, everyMs);
       timers.push(t);
     }
     return () => timers.forEach((t) => clearInterval(t));
-  }, [runMode, widgets, startRoutine, flashTimer]);
+  }, [runMode, widgets, startRoutine, playActionFromTrigger, flashTimer]);
 
   // Publish initial widget values into the controller state store when entering run mode.
   useEffect(() => {
@@ -1591,8 +1669,10 @@ const ControllerTab = forwardRef(function ControllerTab(
 
     const rid = effective ? String(w.bindings?.onPress || '') : String(w.bindings?.onRelease || '');
     if (rid) startRoutine(rid).catch(() => {});
+    const aid = !effective ? String(w.bindings?.onReleaseAction || '') : '';
+    if (aid) playActionFromTrigger(aid).catch(() => {});
     setButtonUiValue(w.id, mode, effective);
-  }, [setButtonUiValue, startRoutine]);
+  }, [setButtonUiValue, startRoutine, playActionFromTrigger]);
 
   // Keyboard triggers (buttons + sliders)
   useEffect(() => {
@@ -1612,6 +1692,10 @@ const ControllerTab = forwardRef(function ControllerTab(
             controllerState.switchSet(w.name, nextVal);
             const rid = nextVal ? String(w.bindings?.onPress || '') : String(w.bindings?.onRelease || '');
             if (rid) startRoutine(rid).catch(() => {});
+            if (!nextVal) {
+              const aid = String(w.bindings?.onReleaseAction || '');
+              if (aid) playActionFromTrigger(aid).catch(() => {});
+            }
             setButtonUiValue(w.id, mode, nextVal);
           } else {
             setMomentaryButtonSource(w.id, 'key', true);
@@ -1689,7 +1773,7 @@ const ControllerTab = forwardRef(function ControllerTab(
       window.removeEventListener('keydown', onDown);
       window.removeEventListener('keyup', onUp);
     };
-  }, [runMode, startRoutine, setButtonUiValue, setMomentaryButtonSource, setSliderUiValue]);
+  }, [runMode, startRoutine, playActionFromTrigger, setButtonUiValue, setMomentaryButtonSource, setSliderUiValue]);
 
   // Gamepad triggers (buttons + joystick axes + slider steps)
   useEffect(() => {
@@ -1719,6 +1803,10 @@ const ControllerTab = forwardRef(function ControllerTab(
               const nextVal = !Boolean(w.props?.value);
               const rid = nextVal ? String(w.bindings?.onPress || '') : String(w.bindings?.onRelease || '');
               setButtonValue(w.id, w.name, mode, nextVal, rid);
+              if (!nextVal) {
+                const aid = String(w.bindings?.onReleaseAction || '');
+                if (aid) playActionFromTrigger(aid).catch(() => {});
+              }
             }
           } else {
             setMomentaryButtonSource(w.id, 'pad', pressed);
@@ -1778,7 +1866,7 @@ const ControllerTab = forwardRef(function ControllerTab(
 
     const t = setInterval(tick, 50);
     return () => clearInterval(t);
-  }, [runMode, startRoutine, setButtonUiValue, setMomentaryButtonSource]);
+  }, [runMode, startRoutine, playActionFromTrigger, setButtonUiValue, setMomentaryButtonSource]);
 
   // Live store subscription to re-render LEDs/displays
   const [, bump] = useState(0);
@@ -1980,6 +2068,10 @@ const ControllerTab = forwardRef(function ControllerTab(
                       controllerState.switchSet(w.name, nextVal);
                       const rid = nextVal ? String(w.bindings?.onPress || '') : String(w.bindings?.onRelease || '');
                       if (rid) startRoutine(rid).catch(() => {});
+                      if (!nextVal) {
+                        const aid = String(w.bindings?.onReleaseAction || '');
+                        if (aid) playActionFromTrigger(aid).catch(() => {});
+                      }
                       updateWidgets(
                         widgets.map((x) => (x.id === w.id ? { ...x, props: { ...(x.props || {}), mode, value: nextVal } } : x)),
                       );
@@ -2243,6 +2335,7 @@ const ControllerTab = forwardRef(function ControllerTab(
         open={!runMode && Boolean(configWidget)}
         widget={configWidget}
         routines={routines}
+        actions={actions}
         onClose={() => setConfigWidgetId('')}
         onDelete={async (id) => {
           const w = widgets.find((x) => String(x?.id) === String(id)) || null;

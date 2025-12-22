@@ -107,6 +107,8 @@ When playing an Action:
 
 Integration idea:
 - Expose a runtime primitive like `playAction(nameOrId)` so Blockly Routines can trigger it.
+- If the same Action is requested while it is already running, ignore the second request.
+- Stopping Actions is best-effort: stop requests (from Emergency Stop or Blockly) stop before the next frame.
 
 ## Confirmed decisions
 1) **Project format**: Actions live as separate files: `actions/<id>.json` (like routines).
