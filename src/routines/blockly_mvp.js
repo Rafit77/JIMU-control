@@ -22,6 +22,17 @@ const xmlDomToText = (dom) => {
   return new XMLSerializer().serializeToString(dom);
 };
 
+const xmlCreateElement = (name) => {
+  if (Blockly?.utils?.xml?.createElement) return Blockly.utils.xml.createElement(name);
+  return document.createElement(name);
+};
+
+const clampMutatorItemCount = (value, max = 8) => {
+  const n = Number(value ?? 1);
+  if (!Number.isFinite(n) || n <= 0) return 1;
+  return Math.min(max, Math.floor(n));
+};
+
 let idOptionsProvider = null;
 export const setIdOptionsProvider = (fn) => {
   idOptionsProvider = typeof fn === 'function' ? fn : null;
@@ -316,6 +327,16 @@ const defineBlocksOnce = (() => {
         this.setMutator(new Blockly.icons.MutatorIcon(['jimu_set_servo_pos_item'], this));
         this.updateShape_();
       },
+      // Persist mutator state in XML (workspace is saved as XML text).
+      mutationToDom() {
+        const m = xmlCreateElement('mutation');
+        m.setAttribute('items', String(this.itemCount_ ?? 1));
+        return m;
+      },
+      domToMutation(xmlElement) {
+        this.itemCount_ = clampMutatorItemCount(xmlElement?.getAttribute?.('items'));
+        this.updateShape_();
+      },
       updateWarning_() {
         const ids = [];
         for (let idx = 0; idx < this.itemCount_; idx += 1) ids.push(String(this.getFieldValue(`ID${idx}`) ?? ''));
@@ -343,8 +364,7 @@ const defineBlocksOnce = (() => {
         return { itemCount: this.itemCount_ };
       },
       loadExtraState(state) {
-        const n = Number(state?.itemCount ?? 1);
-        this.itemCount_ = Number.isFinite(n) && n > 0 ? Math.min(8, Math.floor(n)) : 1;
+        this.itemCount_ = clampMutatorItemCount(state?.itemCount);
         this.updateShape_();
       },
       decompose(workspace) {
@@ -472,12 +492,20 @@ const defineBlocksOnce = (() => {
         this.setMutator(new Blockly.icons.MutatorIcon(['jimu_rotate_motor_item'], this));
         this.updateShape_();
       },
+      mutationToDom() {
+        const m = xmlCreateElement('mutation');
+        m.setAttribute('items', String(this.itemCount_ ?? 1));
+        return m;
+      },
+      domToMutation(xmlElement) {
+        this.itemCount_ = clampMutatorItemCount(xmlElement?.getAttribute?.('items'));
+        this.updateShape_();
+      },
       saveExtraState() {
         return { itemCount: this.itemCount_ };
       },
       loadExtraState(state) {
-        const n = Number(state?.itemCount ?? 1);
-        this.itemCount_ = Number.isFinite(n) && n > 0 ? Math.min(8, Math.floor(n)) : 1;
+        this.itemCount_ = clampMutatorItemCount(state?.itemCount);
         this.updateShape_();
       },
       decompose(workspace) {
@@ -603,12 +631,20 @@ const defineBlocksOnce = (() => {
         this.setMutator(new Blockly.icons.MutatorIcon(['jimu_stop_motor_item'], this));
         this.updateShape_();
       },
+      mutationToDom() {
+        const m = xmlCreateElement('mutation');
+        m.setAttribute('items', String(this.itemCount_ ?? 1));
+        return m;
+      },
+      domToMutation(xmlElement) {
+        this.itemCount_ = clampMutatorItemCount(xmlElement?.getAttribute?.('items'));
+        this.updateShape_();
+      },
       saveExtraState() {
         return { itemCount: this.itemCount_ };
       },
       loadExtraState(state) {
-        const n = Number(state?.itemCount ?? 1);
-        this.itemCount_ = Number.isFinite(n) && n > 0 ? Math.min(8, Math.floor(n)) : 1;
+        this.itemCount_ = clampMutatorItemCount(state?.itemCount);
         this.updateShape_();
       },
       decompose(workspace) {
@@ -744,12 +780,20 @@ const defineBlocksOnce = (() => {
         this.setMutator(new Blockly.icons.MutatorIcon(['jimu_rotate_servo_item'], this));
         this.updateShape_();
       },
+      mutationToDom() {
+        const m = xmlCreateElement('mutation');
+        m.setAttribute('items', String(this.itemCount_ ?? 1));
+        return m;
+      },
+      domToMutation(xmlElement) {
+        this.itemCount_ = clampMutatorItemCount(xmlElement?.getAttribute?.('items'));
+        this.updateShape_();
+      },
       saveExtraState() {
         return { itemCount: this.itemCount_ };
       },
       loadExtraState(state) {
-        const n = Number(state?.itemCount ?? 1);
-        this.itemCount_ = Number.isFinite(n) && n > 0 ? Math.min(8, Math.floor(n)) : 1;
+        this.itemCount_ = clampMutatorItemCount(state?.itemCount);
         this.updateShape_();
       },
       decompose(workspace) {
@@ -881,12 +925,20 @@ const defineBlocksOnce = (() => {
         this.setMutator(new Blockly.icons.MutatorIcon(['jimu_stop_servo_item'], this));
         this.updateShape_();
       },
+      mutationToDom() {
+        const m = xmlCreateElement('mutation');
+        m.setAttribute('items', String(this.itemCount_ ?? 1));
+        return m;
+      },
+      domToMutation(xmlElement) {
+        this.itemCount_ = clampMutatorItemCount(xmlElement?.getAttribute?.('items'));
+        this.updateShape_();
+      },
       saveExtraState() {
         return { itemCount: this.itemCount_ };
       },
       loadExtraState(state) {
-        const n = Number(state?.itemCount ?? 1);
-        this.itemCount_ = Number.isFinite(n) && n > 0 ? Math.min(8, Math.floor(n)) : 1;
+        this.itemCount_ = clampMutatorItemCount(state?.itemCount);
         this.updateShape_();
       },
       decompose(workspace) {
