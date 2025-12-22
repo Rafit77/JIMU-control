@@ -1185,7 +1185,6 @@ const ControllerTab = forwardRef(function ControllerTab(
   });
   const cols = useMemo(() => Math.max(1, Math.floor(Number(gridWidth || 0) / GRID_PX)), [gridWidth]);
   const snappedWidth = useMemo(() => Math.max(GRID_PX, cols * GRID_PX), [cols]);
-  const colPx = GRID_PX;
 
   const runningRef = useRef(new Map()); // routineId -> { cancelRef }
   const lastStartRef = useRef(new Map()); // routineId -> ts
@@ -1873,6 +1872,16 @@ const ControllerTab = forwardRef(function ControllerTab(
   useEffect(() => controllerState.subscribe(() => bump((x) => x + 1)), []);
 
   const layout = useMemo(() => widgets.map((w) => w.layout || { i: w.id, x: 0, y: 0, w: 3, h: 2 }), [widgets]);
+  const rowsUsed = useMemo(() => {
+    let max = 0;
+    for (const w of widgets) {
+      const l = w?.layout || null;
+      const y = Number(l?.y ?? 0);
+      const h = Number(l?.h ?? 0);
+      if (Number.isFinite(y) && Number.isFinite(h)) max = Math.max(max, y + h);
+    }
+    return Math.max(0, Math.round(max));
+  }, [widgets]);
 
   if (!projectId) return <div style={{ color: '#777' }}>Open a project first.</div>;
 
@@ -1890,7 +1899,7 @@ const ControllerTab = forwardRef(function ControllerTab(
           <span style={{ color: '#c62828', fontWeight: 800 }}>JIMU not connected</span>
         )}
         <span style={{ color: '#777', fontSize: 12 }}>
-          grid {GRID_PX}px | cell {Math.round(colPx * 10) / 10}×{GRID_PX} | cols {cols}
+          rows {rowsUsed} | cols {cols}
         </span>
         {!runMode ? (
           <>
