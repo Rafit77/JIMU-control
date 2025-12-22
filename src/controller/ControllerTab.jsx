@@ -1197,6 +1197,7 @@ const ControllerTab = forwardRef(function ControllerTab(
   const sliderKeyRef = useRef(new Map()); // widgetId -> { up: bool, down: bool, timer: any }
   const sliderPadRef = useRef(new Map()); // widgetId -> { up: bool, down: bool, lastAt: number }
   const timerFlashUntilRef = useRef(new Map()); // widgetId -> ts
+  const pendingLayoutRef = useRef(null); // Layout[] or null
   const [, bumpTimerFlash] = useState(0);
 
   const getWidget = (id) => widgets.find((w) => String(w?.id) === String(id)) || null;
@@ -1210,6 +1211,45 @@ const ControllerTab = forwardRef(function ControllerTab(
   const updateWidgets = useCallback((nextWidgets) => {
     onUpdateControllerData?.((prev) => ({ ...(prev || {}), widgets: nextWidgets }));
   }, [onUpdateControllerData]);
+
+  const normalizeLayoutForWidgets = useCallback(
+    (nextLayout) => {
+      const input = Array.isArray(nextLayout) ? nextLayout : [];
+      // Ensure joystick stays square.
+      return input.map((l) => {
+        const w = (widgetsRef.current || []).find((x) => String(x?.id) === String(l?.i));
+        if (!w || w.type !== 'joystick') return l;
+        const size = Math.max(Number(l?.w || 1), Number(l?.h || 1));
+        return { ...l, w: size, h: size };
+      });
+    },
+    [],
+  );
+
+  const commitLayoutToRam = useCallback(
+    (nextLayout) => {
+      const fixed = normalizeLayoutForWidgets(nextLayout);
+      pendingLayoutRef.current = fixed;
+      const byId = new Map(fixed.map((l) => [String(l?.i), l]));
+      const currentWidgets = widgetsRef.current || [];
+      updateWidgets(
+        currentWidgets.map((w) => ({
+          ...w,
+          layout: byId.get(String(w.id)) || w.layout,
+        })),
+      );
+      pendingLayoutRef.current = null;
+    },
+    [normalizeLayoutForWidgets, updateWidgets],
+  );
+
+  // If the user switches tabs mid-interaction and React unmounts the ControllerTab before a drag/resize stop event,
+  // flush the latest pending layout into App-level RAM.
+  useEffect(() => {
+    return () => {
+      if (pendingLayoutRef.current) commitLayoutToRam(pendingLayoutRef.current);
+    };
+  }, [commitLayoutToRam]);
 
   const findRoutinesUsingWidget = useCallback(async (widget) => {
     if (!widget?.name) return [];
@@ -2002,19 +2042,23 @@ const ControllerTab = forwardRef(function ControllerTab(
           }}
           onLayoutChange={(next) => {
             if (runMode) return;
-            const nextFixed = next.map((l) => {
-              const w = widgets.find((x) => String(x.id) === String(l.i));
-              if (!w || w.type !== 'joystick') return l;
-              const size = Math.max(Number(l.w || 1), Number(l.h || 1));
-              return { ...l, w: size, h: size };
-            });
-            const byId = new Map(nextFixed.map((l) => [String(l.i), l]));
-            updateWidgets(
-              widgets.map((w) => ({
-                ...w,
-                layout: byId.get(String(w.id)) || w.layout,
-              })),
-            );
+            pendingLayoutRef.current = normalizeLayoutForWidgets(next);
+          }}
+          onDrag={(l) => {
+            if (runMode) return;
+            pendingLayoutRef.current = normalizeLayoutForWidgets(l);
+          }}
+          onResize={(l) => {
+            if (runMode) return;
+            pendingLayoutRef.current = normalizeLayoutForWidgets(l);
+          }}
+          onDragStop={(l) => {
+            if (runMode) return;
+            commitLayoutToRam(l);
+          }}
+          onResizeStop={(l) => {
+            if (runMode) return;
+            commitLayoutToRam(l);
           }}
         >
           {widgets.map((w) => {
