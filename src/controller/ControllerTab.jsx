@@ -1872,7 +1872,7 @@ const ControllerTab = forwardRef(function ControllerTab(
   useEffect(() => controllerState.subscribe(() => bump((x) => x + 1)), []);
 
   const layout = useMemo(() => widgets.map((w) => w.layout || { i: w.id, x: 0, y: 0, w: 3, h: 2 }), [widgets]);
-  const rowsUsed = useMemo(() => {
+  const rowsUsedFromWidgets = useMemo(() => {
     let max = 0;
     for (const w of widgets) {
       const l = w?.layout || null;
@@ -1882,6 +1882,10 @@ const ControllerTab = forwardRef(function ControllerTab(
     }
     return Math.max(0, Math.round(max));
   }, [widgets]);
+  const [rowsUsedLive, setRowsUsedLive] = useState(rowsUsedFromWidgets);
+  useEffect(() => {
+    setRowsUsedLive(rowsUsedFromWidgets);
+  }, [rowsUsedFromWidgets, projectId]);
 
   if (!projectId) return <div style={{ color: '#777' }}>Open a project first.</div>;
 
@@ -1899,7 +1903,7 @@ const ControllerTab = forwardRef(function ControllerTab(
           <span style={{ color: '#c62828', fontWeight: 800 }}>JIMU not connected</span>
         )}
         <span style={{ color: '#777', fontSize: 12 }}>
-          rows {rowsUsed} | cols {cols}
+          rows {rowsUsedLive} | cols {cols}
         </span>
         {!runMode ? (
           <>
@@ -2021,6 +2025,17 @@ const ControllerTab = forwardRef(function ControllerTab(
               const size = Math.max(Number(l.w || 1), Number(l.h || 1));
               return { ...l, w: size, h: size };
             });
+            try {
+              let max = 0;
+              for (const l of nextFixed) {
+                const y = Number(l?.y ?? 0);
+                const h = Number(l?.h ?? 0);
+                if (Number.isFinite(y) && Number.isFinite(h)) max = Math.max(max, y + h);
+              }
+              setRowsUsedLive(Math.max(0, Math.round(max)));
+            } catch (_) {
+              // ignore
+            }
             const byId = new Map(nextFixed.map((l) => [String(l.i), l]));
             updateWidgets(
               widgets.map((w) => ({
