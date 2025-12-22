@@ -21,6 +21,7 @@ Status: complete (2025-12-19)
 - Specification: `docs/project/routines.md`
 
 ## Milestone 4 — “Controller”
+Status: complete (2025-12-22)
 - Create visual controler designer (buttons, slider, joystick, indicator(led), display(number))
 - routine backgroud execution (paralel)
 - Widgets (button/slider/joystick) + triggers for routines
@@ -30,10 +31,12 @@ Status: complete (2025-12-19)
 
 ## Milestone 5 — “Actions”
 - Actions workspace in app
-- record / play / edit Action
+- Specification: `docs/project/actions.md`
 - allow routines to call Actions,
 - allow Action instead of routine in triggers (in controler)
 
 ## Milestone 6 — “Distribution”
 - Windows installer + auto-update strategy
 - Crash reporting/log export
+- fix: set JIMU_OPEN_DEVTOOLS=1
+- logs in project, rotate 10 last

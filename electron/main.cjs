@@ -30,6 +30,8 @@ const getSavesRoot = () => path.join(app.getAppPath(), 'jimu_saves');
 const getProjectDir = (projectId) => path.join(getSavesRoot(), projectId);
 const getRoutinesDir = (projectId) => path.join(getProjectDir(projectId), 'routines');
 const getRoutinePath = (projectId, routineId) => path.join(getRoutinesDir(projectId), `${routineId}.xml`);
+const getActionsDir = (projectId) => path.join(getProjectDir(projectId), 'actions');
+const getActionPath = (projectId, actionId) => path.join(getActionsDir(projectId), `${actionId}.json`);
 const getLogsDir = (projectId) => path.join(getProjectDir(projectId), 'log');
 
 const defaultRoutineXml = () => '<xml xmlns="https://developers.google.com/blockly/xml"></xml>\n';
@@ -110,6 +112,21 @@ const backupAllRoutineFiles = async (projectId) => {
   }
 };
 
+const backupAllActionFiles = async (projectId) => {
+  if (!projectId) return;
+  try {
+    await ensureDir(getActionsDir(projectId));
+    const entries = await fs.readdir(getActionsDir(projectId), { withFileTypes: true });
+    for (const e of entries) {
+      if (!e.isFile()) continue;
+      if (!e.name.endsWith('.json')) continue;
+      await backupFile(path.join(getActionsDir(projectId), e.name));
+    }
+  } catch (_) {
+    // ignore
+  }
+};
+
 const listProjects = async () => {
   const root = getSavesRoot();
   await ensureDir(root);
@@ -168,6 +185,7 @@ const createProject = async ({ name, description }) => {
   await ensureDir(projectDir);
   await ensureDir(path.join(projectDir, 'assets'));
   await ensureDir(path.join(projectDir, 'routines'));
+  await ensureDir(path.join(projectDir, 'actions'));
   const data = {
     schemaVersion: 1,
     name: safeName(name),
@@ -184,6 +202,7 @@ const createProject = async ({ name, description }) => {
       motorConfig: {},
     },
     routines: [],
+    actions: [],
   };
   await writeJson(path.join(projectDir, 'project.json'), data);
   return loadProject(id);
@@ -195,18 +214,22 @@ const saveProject = async ({ id, data }) => {
   await ensureDir(projectDir);
   await ensureDir(path.join(projectDir, 'assets'));
   await ensureDir(path.join(projectDir, 'routines'));
+  await ensureDir(path.join(projectDir, 'actions'));
   const now = new Date().toISOString();
 
   // Always create a per-save backup of every routine XML present on disk.
   // This protects against any accidental write/wipe while we keep a RAM-first model.
   await backupAllRoutineFiles(id);
+  await backupAllActionFiles(id);
 
   // Preserve routines from disk when the UI doesn't provide them.
   // (Older UI paths managed routines via `routine:*` IPC calls only.)
   let preservedRoutines = null;
+  let preservedActions = null;
   try {
     const existing = await readJson(path.join(projectDir, 'project.json'));
     if (Array.isArray(existing?.routines)) preservedRoutines = existing.routines;
+    if (Array.isArray(existing?.actions)) preservedActions = existing.actions;
   } catch (_) {
     // ignore (project.json may not exist yet)
   }
@@ -214,9 +237,14 @@ const saveProject = async ({ id, data }) => {
   const routineXmlById = data && typeof data === 'object' ? data.__routineXmlById : null;
   const routineXmlProvided =
     routineXmlById && typeof routineXmlById === 'object' && Object.keys(routineXmlById).length > 0;
+  const actionJsonById = data && typeof data === 'object' ? data.__actionJsonById : null;
+  const actionJsonProvided =
+    actionJsonById && typeof actionJsonById === 'object' && Object.keys(actionJsonById).length > 0;
   const next = { ...(data || {}), updatedAt: now };
   delete next.__routineXmlById;
+  delete next.__actionJsonById;
   if (!Array.isArray(next.routines) && preservedRoutines) next.routines = preservedRoutines;
+  if (!Array.isArray(next.actions) && preservedActions) next.actions = preservedActions;
   if (Array.isArray(next.routines) && next.routines.length === 0 && preservedRoutines?.length && !routineXmlProvided) {
     // Safety: prevent accidental wipe if UI sends an empty list without the routine XML batch.
     next.routines = preservedRoutines;
@@ -228,6 +256,15 @@ const saveProject = async ({ id, data }) => {
     uiLog(msg);
     appendProjectRunLog(id, msg);
     next.routines = preservedRoutines;
+  }
+  if (Array.isArray(next.actions) && next.actions.length === 0 && preservedActions?.length && !actionJsonProvided) {
+    next.actions = preservedActions;
+  }
+  if (Array.isArray(next.actions) && next.actions.length === 0 && preservedActions?.length && actionJsonProvided) {
+    const msg = `Safety: refusing to save empty actions list (preserving ${preservedActions.length})`;
+    uiLog(msg);
+    appendProjectRunLog(id, msg);
+    next.actions = preservedActions;
   }
   if (!next.createdAt) next.createdAt = now;
   if (!next.schemaVersion) next.schemaVersion = 1;
@@ -285,6 +322,58 @@ const saveProject = async ({ id, data }) => {
     }
   }
 
+  // If the UI provides actions + their JSON, persist them as a batch.
+  if (Array.isArray(next.actions) && actionJsonProvided) {
+    const keepIds = new Set(next.actions.map((a) => String(a?.id || '')).filter(Boolean));
+    await ensureDir(getActionsDir(id));
+    let allActionJsonPresent = true;
+
+    for (const aid of keepIds) {
+      if (!Object.prototype.hasOwnProperty.call(actionJsonById, aid) || actionJsonById[aid] == null) {
+        const msg = `Action JSON missing for id=${aid}; preserving existing file`;
+        uiLog(msg);
+        appendProjectRunLog(id, msg);
+        allActionJsonPresent = false;
+        continue;
+      }
+      const obj = actionJsonById[aid];
+      const body = `${JSON.stringify(obj, null, 2)}\n`;
+      const actionPath = getActionPath(id, aid);
+      await backupFile(actionPath);
+      await fs.writeFile(actionPath, body, 'utf8');
+      const bytes = Buffer.byteLength(body, 'utf8');
+      const msg = `Action saved to disk id=${aid} bytes=${bytes} (project save)`;
+      uiLog(msg);
+      appendProjectRunLog(id, msg);
+    }
+
+    // Delete action JSON files that are no longer referenced by project.json.
+    try {
+      if (keepIds.size === 0) {
+        const msg = 'Safety: skipping action file pruning because keepIds is empty';
+        uiLog(msg);
+        appendProjectRunLog(id, msg);
+      } else if (!allActionJsonPresent) {
+        const msg = 'Safety: skipping action file pruning because action JSON batch is incomplete';
+        uiLog(msg);
+        appendProjectRunLog(id, msg);
+      } else {
+        const entries = await fs.readdir(getActionsDir(id), { withFileTypes: true });
+        for (const e of entries) {
+          if (!e.isFile()) continue;
+          if (!e.name.endsWith('.json')) continue;
+          const aid = e.name.slice(0, -5);
+          if (!keepIds.has(String(aid))) {
+            await backupFile(getActionPath(id, aid));
+            await fs.rm(getActionPath(id, aid), { force: true });
+          }
+        }
+      }
+    } catch (_) {
+      // ignore
+    }
+  }
+
   await writeJson(path.join(projectDir, 'project.json'), next);
   return loadProject(id);
 };
@@ -298,6 +387,19 @@ const listRoutines = async (projectId) => {
     createdAt: r?.createdAt || null,
     updatedAt: r?.updatedAt || null,
   }));
+};
+
+const loadActionJson = async (projectId, actionId) => {
+  if (!projectId) throw new Error('projectId is required');
+  if (!actionId) throw new Error('actionId is required');
+  const p = getActionPath(projectId, String(actionId));
+  try {
+    const obj = await readJson(p);
+    return { ok: true, json: obj };
+  } catch (e) {
+    if (e?.code === 'ENOENT') return { ok: false, notFound: true, json: null };
+    throw e;
+  }
 };
 
 const saveRoutineList = async (projectId, updater) => {
@@ -396,6 +498,23 @@ const cloneProject = async ({ fromId, name, description }) => {
     createdAt: created?.data?.createdAt || new Date().toISOString(),
   };
   await saveProject({ id: created.id, data: nextData });
+
+  // Best-effort: copy routine XML and action JSON files so the cloned project is complete.
+  const copyDirByExt = async (fromDir, toDir, ext) => {
+    try {
+      await ensureDir(toDir);
+      const entries = await fs.readdir(fromDir, { withFileTypes: true });
+      for (const e of entries) {
+        if (!e.isFile()) continue;
+        if (ext && !e.name.endsWith(ext)) continue;
+        await fs.copyFile(path.join(fromDir, e.name), path.join(toDir, e.name));
+      }
+    } catch (_) {
+      // ignore
+    }
+  };
+  await copyDirByExt(getRoutinesDir(fromId), getRoutinesDir(created.id), '.xml');
+  await copyDirByExt(getActionsDir(fromId), getActionsDir(created.id), '.json');
   try {
     await fs.copyFile(
       path.join(src.dir, 'assets', 'thumbnail.png'),
@@ -506,6 +625,9 @@ const registerIpc = () => {
   ipcMain.handle('routine:list', async (_evt, { projectId } = {}) => {
     if (!projectId) throw new Error('projectId is required');
     return listRoutines(projectId);
+  });
+  ipcMain.handle('action:loadJson', async (_evt, { projectId, actionId } = {}) => {
+    return loadActionJson(projectId, actionId);
   });
   ipcMain.handle('routine:create', async (_evt, { projectId, name } = {}) => {
     if (!projectId) throw new Error('projectId is required');

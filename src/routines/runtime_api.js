@@ -26,10 +26,43 @@ const eyeSegmentMaskForCompass = (pos) => {
   return 1 << idx;
 };
 
+const ACTION_FRAME_MIN_MS = 50;
+const ACTION_FRAME_MAX_MS = 5000;
+
+const normalizeActionJson = (actionJson, actionMeta) => {
+  const meta = actionMeta && typeof actionMeta === 'object' ? actionMeta : {};
+  const base = {
+    id: String(meta?.id || ''),
+    name: String(meta?.name || ''),
+    servoIds: Array.isArray(meta?.servoIds) ? meta.servoIds.map(Number).filter((n) => Number.isFinite(n)) : [],
+    frames: [],
+  };
+  const obj = actionJson && typeof actionJson === 'object' ? actionJson : {};
+  const framesRaw = Array.isArray(obj.frames) ? obj.frames : [];
+  const frames = framesRaw
+    .map((f) => {
+      const durationMs = clamp(Number(f?.durationMs ?? 400), ACTION_FRAME_MIN_MS, ACTION_FRAME_MAX_MS);
+      const poseDeg = f?.poseDeg && typeof f.poseDeg === 'object' ? f.poseDeg : {};
+      return { durationMs, poseDeg };
+    })
+    .filter(Boolean);
+  return {
+    ...base,
+    ...obj,
+    id: base.id || String(obj?.id || ''),
+    name: String(obj?.name ?? base.name),
+    servoIds: base.servoIds.length ? base.servoIds : Array.isArray(obj?.servoIds) ? obj.servoIds : [],
+    frames,
+  };
+};
+
 export const createRoutineApi = ({
   ipc,
+  projectId,
   calibration,
   projectModules,
+  projectActions,
+  actionJsonRamCacheRef,
   battery,
   addLog,
   appendTrace,
@@ -55,6 +88,8 @@ export const createRoutineApi = ({
       };
     });
   };
+
+  const actionJsonCacheRef = actionJsonRamCacheRef || { current: new Map() }; // actionId -> json
 
   const servoSpeedByteFromDurationMs = (durationMs) => {
     const ms = clamp(Number(durationMs ?? 400), 0, 60_000);
@@ -249,10 +284,48 @@ export const createRoutineApi = ({
   const getButton = (name) => controllerState.switchGet(String(name ?? ''));
   const getSwitch = (name) => getButton(name); // back-compat
 
-  const selectAction = (name) => {
-    trace('Note: select action is a placeholder (Actions playback not implemented yet).');
-    trace(`Selected action: ${String(name || '')}`);
+  const loadActionJson = async (actionId) => {
+    const id = String(actionId || '');
+    if (!id) return null;
+    const cached = actionJsonCacheRef.current.get(id);
+    if (cached !== undefined) return cached;
+    if (!ipc || !projectId) return null;
+    try {
+      const res = await ipc.invoke('action:loadJson', { projectId, actionId: id });
+      const obj = res?.json && typeof res.json === 'object' ? res.json : null;
+      const meta = (Array.isArray(projectActions) ? projectActions : []).find((a) => String(a?.id) === id) || null;
+      const normalized = normalizeActionJson(obj, meta || { id, name: id, servoIds: [] });
+      actionJsonCacheRef.current.set(id, normalized);
+      return normalized;
+    } catch (_) {
+      return null;
+    }
   };
+
+  const playAction = async (actionId) => {
+    const id = String(actionId || '').trim();
+    if (!id) return;
+    if (!ipc) throw new Error('IPC unavailable');
+    if (isCancelled()) return;
+
+    const meta = (Array.isArray(projectActions) ? projectActions : []).find((a) => String(a?.id) === id) || null;
+    const action = (await loadActionJson(id)) || null;
+    const servoIds = (meta?.servoIds || action?.servoIds || []).map(Number).filter((n) => Number.isFinite(n) && n > 0);
+    const frames = Array.isArray(action?.frames) ? action.frames : [];
+    if (!frames.length) return;
+
+    for (const f of frames) {
+      if (isCancelled()) return;
+      const durationMs = clamp(Number(f?.durationMs ?? 400), ACTION_FRAME_MIN_MS, ACTION_FRAME_MAX_MS);
+      const poseDeg = f?.poseDeg && typeof f.poseDeg === 'object' ? f.poseDeg : {};
+      const entries = servoIds
+        .map((sid) => ({ id: sid, deg: poseDeg[String(sid)] }))
+        .filter((e) => typeof e.deg === 'number' && Number.isFinite(e.deg));
+      await setServoPositionsTimed(entries, durationMs);
+    }
+  };
+
+  const selectAction = (actionId) => playAction(actionId);
 
   const eyeColorMask = async (eyesMask, hex) => {
     if (!ipc) throw new Error('IPC unavailable');
@@ -437,6 +510,7 @@ export const createRoutineApi = ({
     getButton,
     getSwitch,
     selectAction,
+    playAction,
     eyeColorMask,
     eyeColorForMask,
     eyeSceneMask,

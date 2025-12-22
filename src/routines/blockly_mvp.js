@@ -73,6 +73,30 @@ const getRoutineOptions = (ctx) => {
   return [['(none)', '']];
 };
 
+let actionOptionsProvider = null;
+export const setActionOptionsProvider = (fn) => {
+  actionOptionsProvider = typeof fn === 'function' ? fn : null;
+};
+const getActionOptions = (ctx) => {
+  const includeId = String(ctx?.includeActionId || '');
+  try {
+    const res = actionOptionsProvider ? actionOptionsProvider(ctx) : null;
+    const list = Array.isArray(res) ? res : [];
+    const options = list
+      .map((a) => ({ id: String(a?.id || ''), name: String(a?.name || '').trim() }))
+      .filter((a) => a.id && a.name)
+      .sort((a, b) => a.name.localeCompare(b.name));
+    if (options.length) {
+      const out = options.map((a) => [a.name, a.id]);
+      if (includeId && !options.some((a) => a.id === includeId)) out.unshift([`(missing: ${includeId})`, includeId]);
+      return out;
+    }
+  } catch (_) {
+    // ignore
+  }
+  return includeId ? [[`(missing: ${includeId})`, includeId]] : [['(none)', '']];
+};
+
 const getNumericIdOptions = (kind) =>
   getIdOptions(kind)
     .map(([, v]) => Number(v))
@@ -151,16 +175,7 @@ const defineBlocksOnce = (() => {
         colour: 0,
         tooltip: 'Immediate stop (best effort) + cancel routine.',
       },
-      // NOTE: blocks with dynamic module ID dropdowns are defined below (not JSON).
-      {
-        type: 'jimu_select_action',
-        message0: 'select action %1',
-        args0: [{ type: 'field_input', name: 'NAME', text: 'wave' }],
-        previousStatement: null,
-        nextStatement: null,
-        colour: 210,
-        tooltip: 'Placeholder: select an Action for later playback integration.',
-      },
+      // NOTE: blocks with dynamic dropdowns are defined below (not JSON).
     ]);
 
     const makeIdDropdown = (kind) => new Blockly.FieldDropdown(() => getIdOptions(kind));
@@ -172,6 +187,11 @@ const defineBlocksOnce = (() => {
         const currentRoutineId = String(ws?.__jimuRoutineId || '');
         const includeRoutineId = typeof this.getValue === 'function' ? String(this.getValue() || '') : '';
         return getRoutineOptions({ currentRoutineId, includeRoutineId });
+      });
+    const makeActionDropdown = () =>
+      new Blockly.FieldDropdown(function () {
+        const includeActionId = typeof this.getValue === 'function' ? String(this.getValue() || '') : '';
+        return getActionOptions({ includeActionId });
       });
     const appendEyesMaskInput = (block) => {
       const ids = getNumericIdOptions('eyes');
@@ -215,6 +235,16 @@ const defineBlocksOnce = (() => {
         this.setOutput(true, 'Boolean');
         this.setColour(60);
         this.setTooltip('Controller: read a button value.');
+      },
+    };
+
+    Blockly.Blocks.jimu_select_action = {
+      init() {
+        this.appendDummyInput().appendField('action').appendField(makeActionDropdown(), 'NAME');
+        this.setPreviousStatement(true, null);
+        this.setNextStatement(true, null);
+        this.setColour(210);
+        this.setTooltip('Play a recorded Action (pose sequence).');
       },
     };
 
@@ -1292,8 +1322,9 @@ const defineBlocksOnce = (() => {
       return [`api.getButton(${JSON.stringify(name)})`, javascriptGenerator.ORDER_NONE];
     };
     javascriptGenerator.forBlock.jimu_select_action = (block) => {
-      const name = String(block.getFieldValue('NAME') || '');
-      return `api.selectAction(${JSON.stringify(name)});\n`;
+      const actionId = String(block.getFieldValue('NAME') || '');
+      if (!actionId) return '';
+      return `await api.playAction(${JSON.stringify(actionId)});\n`;
     };
     javascriptGenerator.forBlock.jimu_eye_color = (block) => {
       const hex = String(block.getFieldValue('HEX') || '#000000');

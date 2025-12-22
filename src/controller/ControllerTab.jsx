@@ -4,7 +4,13 @@ import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 
 import * as controllerState from './controller_state.js';
-import { setControllerWidgetOptionsProvider, setIdOptionsProvider, setRoutineOptionsProvider, xmlTextToAsyncJs } from '../routines/blockly_mvp.js';
+import {
+  setActionOptionsProvider,
+  setControllerWidgetOptionsProvider,
+  setIdOptionsProvider,
+  setRoutineOptionsProvider,
+  xmlTextToAsyncJs,
+} from '../routines/blockly_mvp.js';
 import { createRoutineApi } from '../routines/runtime_api.js';
 import * as globalVars from '../routines/global_vars.js';
 
@@ -1122,8 +1128,10 @@ const ControllerTab = forwardRef(function ControllerTab(
     projectModules,
     battery,
     routines,
+    actions,
     controllerData,
     routineXmlRamCacheRef,
+    actionJsonRamCacheRef,
     onUpdateControllerData,
     addLog,
   },
@@ -1261,8 +1269,11 @@ const ControllerTab = forwardRef(function ControllerTab(
         const fn = new Function('api', src);
         const api = createRoutineApi({
           ipc,
+          projectId,
           calibration,
           projectModules,
+          projectActions: Array.isArray(actions) ? actions : [],
+          actionJsonRamCacheRef,
           battery,
           // Important: don't pass addLog here, otherwise api.log() writes twice:
           // once via appendTrace and once via addLog.
@@ -1317,7 +1328,7 @@ const ControllerTab = forwardRef(function ControllerTab(
         runningRef.current.delete(rid);
       }
     },
-    [ipc, projectId, calibration, projectModules, battery, addLog, routineXmlRamCacheRef],
+    [ipc, projectId, calibration, projectModules, actions, battery, addLog, routineXmlRamCacheRef, actionJsonRamCacheRef],
   );
 
   const setButtonUiValue = useCallback((widgetId, mode, value) => {
@@ -1424,6 +1435,11 @@ const ControllerTab = forwardRef(function ControllerTab(
     setRoutineOptionsProvider(() => (Array.isArray(routines) ? routines : []));
     return () => setRoutineOptionsProvider(null);
   }, [routines]);
+
+  useEffect(() => {
+    setActionOptionsProvider(() => (Array.isArray(actions) ? actions : []));
+    return () => setActionOptionsProvider(null);
+  }, [actions]);
 
   // One-time migrations for older controller data.
   useEffect(() => {

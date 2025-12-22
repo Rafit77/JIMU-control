@@ -158,7 +158,7 @@ Variables dialog rules:
   - Mutator block: add/remove motor rows; each motor has its own speed; duration is shared.
 - `stop motor` (`jimu_stop_motor`)
   - Mutator block: add/remove motor ID rows (IDs must be distinct).
-- `select action [name]` (`jimu_select_action`): placeholder for later Action integration.
+- `action [name]` (`jimu_select_action`): play an Action (pose sequence) selected from the project Actions list.
 - `emergency stop` (`jimu_emergency_stop`): immediate stop + cancels the routine run.
 
 ### Show

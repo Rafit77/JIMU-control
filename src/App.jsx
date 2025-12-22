@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import * as Slider from '@radix-ui/react-slider';
 import RoutinesTab from './routines/RoutinesTab.jsx';
+import ActionsTab from './actions/ActionsTab.jsx';
 import ControllerTab from './controller/ControllerTab.jsx';
 import { batteryPercentFromVolts } from './battery.js';
 import * as globalVars from './routines/global_vars.js';
@@ -270,8 +271,10 @@ export default function App() {
   }, []);
   const eyeAnimCancelRef = useRef(null);
   const routinesRef = useRef(null);
+  const actionsRef = useRef(null);
   const controllerRef = useRef(null);
   const routineXmlRamCacheRef = useRef(new Map()); // routineId -> xml (RAM-only, per current project)
+  const actionJsonRamCacheRef = useRef(new Map()); // actionId -> json (RAM-only, per current project)
 
   const addLog = useCallback((msg, opts = {}) => {
     const persist = opts?.persist !== false;
@@ -343,6 +346,10 @@ export default function App() {
   }, [currentProject?.id]);
 
   useEffect(() => {
+    actionJsonRamCacheRef.current.clear();
+  }, [currentProject?.id]);
+
+  useEffect(() => {
     if (status !== 'Connected') return;
     controllerState.resetAll();
   }, [status, currentProject?.id]);
@@ -350,10 +357,16 @@ export default function App() {
   const saveCurrentProject = useCallback(async () => {
     if (!ipc || !currentProject?.id) return;
     let routinesPayload = null;
+    let actionsPayload = null;
     try {
       routinesPayload = await routinesRef.current?.exportForSave?.();
     } catch (e) {
       addLog(`Routine export failed: ${e?.message || String(e)}`);
+    }
+    try {
+      actionsPayload = await actionsRef.current?.exportForSave?.();
+    } catch (e) {
+      addLog(`Action export failed: ${e?.message || String(e)}`);
     }
     const routinesList = Array.isArray(routinesPayload?.routines)
       ? routinesPayload.routines
@@ -361,6 +374,13 @@ export default function App() {
         ? currentProject.data.routines
         : [];
     const routineXmlById = routinesPayload?.routineXmlById && typeof routinesPayload.routineXmlById === 'object' ? routinesPayload.routineXmlById : null;
+    const actionsList = Array.isArray(actionsPayload?.actions)
+      ? actionsPayload.actions
+      : Array.isArray(currentProject.data?.actions)
+        ? currentProject.data.actions
+        : [];
+    const actionJsonById =
+      actionsPayload?.actionJsonById && typeof actionsPayload.actionJsonById === 'object' ? actionsPayload.actionJsonById : null;
     const dataToSave = {
       ...(currentProject.data || {}),
       variables: (() => {
@@ -371,7 +391,9 @@ export default function App() {
         }
       })(),
       routines: routinesList,
+      actions: actionsList,
       ...(routineXmlById ? { __routineXmlById: routineXmlById } : null),
+      ...(actionJsonById ? { __actionJsonById: actionJsonById } : null),
       hardware: {
         ...(currentProject.data?.hardware || {}),
         modules: modules || currentProject.data?.hardware?.modules || null,
@@ -851,6 +873,11 @@ export default function App() {
       if (!ok) return;
       await routinesRef.current.stopIfRunning?.();
     }
+    if (tab === 'actions' && actionsRef.current?.confirmCanLeave) {
+      const ok = await actionsRef.current.confirmCanLeave();
+      if (!ok) return;
+      await actionsRef.current.stopIfRunning?.();
+    }
     await turnOffUltrasonicLeds(modules?.ultrasonic);
     if (isDirty) {
       const save = window.confirm('You have unsaved changes. Save now?');
@@ -1156,6 +1183,7 @@ export default function App() {
                 if (!ipc) return;
                 try {
                   await routinesRef.current?.stopIfRunning?.();
+                  await actionsRef.current?.stopIfRunning?.();
                   await controllerRef.current?.stopAllRoutines?.();
                   await ipc.invoke('jimu:emergencyStop');
                   addLog('Emergency stop issued');
@@ -1193,6 +1221,11 @@ export default function App() {
                     const ok = await routinesRef.current.confirmCanLeave();
                     if (!ok) return;
                     await routinesRef.current.stopIfRunning?.();
+                  }
+                  if (tab === 'actions' && t !== 'actions' && actionsRef.current?.confirmCanLeave) {
+                    const ok = await actionsRef.current.confirmCanLeave();
+                    if (!ok) return;
+                    await actionsRef.current.stopIfRunning?.();
                   }
                   await closeServoPanel();
                   await closeMotorPanel();
@@ -2605,8 +2638,19 @@ export default function App() {
           )}
 
           {tab === 'actions' && (
-            <Section title="Actions (placeholder)">
-              <div style={{ color: '#777' }}>Create and edit action timelines (future work).</div>
+            <Section style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', marginBottom: 0 }}>
+              <ActionsTab
+                ref={actionsRef}
+                ipc={ipc}
+                projectId={currentProject?.id}
+                status={status}
+                calibration={currentProject?.data?.calibration || {}}
+                projectModules={currentProject?.data?.hardware?.modules || {}}
+                projectActions={currentProject?.data?.actions || []}
+                onUpdateProjectData={updateCurrentProjectData}
+                actionJsonRamCacheRef={actionJsonRamCacheRef}
+                addLog={addLog}
+              />
             </Section>
           )}
 
@@ -2623,8 +2667,10 @@ export default function App() {
                 projectModules={currentProject?.data?.hardware?.modules || {}}
                 controllerData={currentProject?.data?.controller || { widgets: [] }}
                 projectRoutines={currentProject?.data?.routines}
+                projectActions={currentProject?.data?.actions || []}
                 onUpdateProjectData={updateCurrentProjectData}
                 routineXmlRamCacheRef={routineXmlRamCacheRef}
+                actionJsonRamCacheRef={actionJsonRamCacheRef}
                 battery={battery}
                 addLog={addLog}
               />
@@ -2642,8 +2688,10 @@ export default function App() {
                 projectModules={currentProject?.data?.hardware?.modules || {}}
                 battery={battery}
                 routines={currentProject?.data?.routines || []}
+                actions={currentProject?.data?.actions || []}
                 controllerData={currentProject?.data?.controller || { widgets: [] }}
                 routineXmlRamCacheRef={routineXmlRamCacheRef}
+                actionJsonRamCacheRef={actionJsonRamCacheRef}
                 onUpdateControllerData={(updater) => {
                   updateCurrentProjectData((d) => {
                     const prev = d?.controller || { widgets: [] };

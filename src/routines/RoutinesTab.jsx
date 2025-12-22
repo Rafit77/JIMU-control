@@ -2,6 +2,7 @@ import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo
 import * as Blockly from 'blockly';
 import {
   createWorkspace,
+  setActionOptionsProvider,
   setControllerWidgetOptionsProvider,
   setIdOptionsProvider,
   setRoutineOptionsProvider,
@@ -21,6 +22,33 @@ const newId = () => {
     // ignore
   }
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
+
+const normalizeActionJson = (actionJson, actionMeta) => {
+  const meta = actionMeta && typeof actionMeta === 'object' ? actionMeta : {};
+  const base = {
+    id: String(meta?.id || ''),
+    name: String(meta?.name || ''),
+    servoIds: Array.isArray(meta?.servoIds) ? meta.servoIds.map(Number).filter((n) => Number.isFinite(n)) : [],
+    frames: [],
+  };
+  const obj = actionJson && typeof actionJson === 'object' ? actionJson : {};
+  const framesRaw = Array.isArray(obj.frames) ? obj.frames : [];
+  const frames = framesRaw
+    .map((f) => {
+      const durationMs = clamp(Number(f?.durationMs ?? 400), 50, 5000);
+      const poseDeg = f?.poseDeg && typeof f.poseDeg === 'object' ? f.poseDeg : {};
+      return { durationMs, poseDeg };
+    })
+    .filter(Boolean);
+  return {
+    ...base,
+    ...obj,
+    id: base.id || String(obj?.id || ''),
+    name: String(obj?.name ?? base.name),
+    servoIds: base.servoIds.length ? base.servoIds : Array.isArray(obj?.servoIds) ? obj.servoIds : [],
+    frames,
+  };
 };
 
 const parseSubroutineCalls = (xmlText) => {
@@ -365,8 +393,10 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     projectModules,
     controllerData,
     projectRoutines,
+    projectActions,
     onUpdateProjectData,
     routineXmlRamCacheRef,
+    actionJsonRamCacheRef,
     battery,
     addLog,
   },
@@ -392,6 +422,8 @@ const RoutinesTab = forwardRef(function RoutinesTab(
   const cancelRef = useRef({ cancel: () => {} });
   const localRoutineXmlCacheRef = useRef(new Map());
   const routineXmlCacheRef = routineXmlRamCacheRef || localRoutineXmlCacheRef; // routineId -> xml (RAM-only until project save)
+  const localActionJsonCacheRef = useRef(new Map());
+  const actionJsonCacheRef = actionJsonRamCacheRef || localActionJsonCacheRef; // actionId -> json (RAM-only until project save)
   const editorInitialXmlRef = useRef(''); // xml used for workspace initialization (avoids async setState ordering issues)
   const suppressDirtyRef = useRef(false);
 
@@ -459,6 +491,11 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     if (routineXmlRamCacheRef) return;
     routineXmlCacheRef.current.clear();
   }, [projectId, routineXmlRamCacheRef]);
+
+  useEffect(() => {
+    if (actionJsonRamCacheRef) return;
+    actionJsonCacheRef.current.clear();
+  }, [projectId, actionJsonRamCacheRef]);
 
   useEffect(() => {
     refreshList().catch(() => {});
@@ -607,6 +644,11 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     });
     return () => setRoutineOptionsProvider(null);
   }, [routines]);
+
+  useEffect(() => {
+    setActionOptionsProvider(() => (Array.isArray(projectActions) ? projectActions : []));
+    return () => setActionOptionsProvider(null);
+  }, [projectActions]);
 
   const loadRoutine = useCallback(
     async (routine) => {
@@ -1089,13 +1131,48 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     const getButton = (name) => controllerState.switchGet(String(name ?? ''));
     const getSwitch = (name) => getButton(name); // back-compat
 
-    const selectAction = (name) => {
-      if (!warnedRef.action) {
-        warnedRef.action = true;
-        appendTrace('Note: select action is a placeholder (Actions playback not implemented yet).');
+    const loadActionJson = async (actionId) => {
+      const id = String(actionId || '');
+      if (!id) return null;
+      const cached = actionJsonCacheRef.current.get(id);
+      if (cached !== undefined) return cached;
+      if (!ipc || !projectId) return null;
+      try {
+        const res = await ipc.invoke('action:loadJson', { projectId, actionId: id });
+        const obj = res?.json && typeof res.json === 'object' ? res.json : null;
+        const meta = (Array.isArray(projectActions) ? projectActions : []).find((a) => String(a?.id) === id) || null;
+        const normalized = normalizeActionJson(obj, meta || { id, name: id, servoIds: [] });
+        actionJsonCacheRef.current.set(id, normalized);
+        return normalized;
+      } catch (_) {
+        return null;
       }
-      appendTrace(`Selected action: ${String(name || '')}`);
     };
+
+    const playAction = async (actionId) => {
+      const id = String(actionId || '').trim();
+      if (!id) return;
+      if (!ipc) throw new Error('IPC unavailable');
+      if (isCancelled()) return;
+
+      const meta = (Array.isArray(projectActions) ? projectActions : []).find((a) => String(a?.id) === id) || null;
+      const action = (await loadActionJson(id)) || null;
+      const servoIds = (meta?.servoIds || action?.servoIds || []).map(Number).filter((n) => Number.isFinite(n) && n > 0);
+      const frames = Array.isArray(action?.frames) ? action.frames : [];
+      if (!frames.length) return;
+
+      for (const f of frames) {
+        if (isCancelled()) return;
+        const durationMs = clamp(Number(f?.durationMs ?? 400), 50, 5000);
+        const poseDeg = f?.poseDeg && typeof f.poseDeg === 'object' ? f.poseDeg : {};
+        const entries = servoIds
+          .map((sid) => ({ id: sid, deg: poseDeg[String(sid)] }))
+          .filter((e) => typeof e.deg === 'number' && Number.isFinite(e.deg));
+        await setServoPositionsTimed(entries, durationMs);
+      }
+    };
+
+    const selectAction = (actionId) => playAction(actionId);
 
     const eyeColorMask = async (eyesMask, hex) => {
       if (!ipc) throw new Error('IPC unavailable');
@@ -1287,6 +1364,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       getJoystick,
       getButton,
       getSwitch,
+      playAction,
       selectAction,
       eyeColorMask,
       eyeColorForMask,
@@ -1366,7 +1444,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     };
 
     return api;
-  }, [ipc, projectId, calibration, projectModules, battery, addLog, stepDelayMs]);
+  }, [ipc, projectId, calibration, projectModules, projectActions, battery, addLog, stepDelayMs]);
 
   const runRoutine = useCallback(async () => {
     if (!editorRoutine) return;
