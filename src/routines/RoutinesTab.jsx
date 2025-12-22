@@ -431,12 +431,14 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     (updater) => {
       setRoutines((prev) => {
         const next = typeof updater === 'function' ? updater(prev) : updater;
+        const nextList = Array.isArray(next) ? next : [];
+        // Defer project update to avoid "setState while rendering" warnings in React 18.
         try {
-          onUpdateProjectData?.((d) => ({ ...(d || {}), routines: Array.isArray(next) ? next : [] }));
+          Promise.resolve().then(() => onUpdateProjectData?.((d) => ({ ...(d || {}), routines: nextList })));
         } catch (_) {
           // ignore
         }
-        return Array.isArray(next) ? next : [];
+        return nextList;
       });
     },
     [onUpdateProjectData],
