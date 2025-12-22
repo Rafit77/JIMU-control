@@ -1,4 +1,4 @@
 # Screenshots
 
-Add real screenshots here and keep the filenames referenced by `README.md`.
+Real screenshots here and keep the filenames referenced by `README.md`.
 

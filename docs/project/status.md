@@ -16,11 +16,20 @@
   - Blockly editor with toolbox, variables dialog, trace output
   - Run/Stop (cancellable) using IPC-only device API
   - Routines persisted as `routines/<id>.xml`
-
-## What's planned next
 - Action editor (pose-sequence timeline) and playback
 - Controller widgets and bindings
+  - create controller, link routines and actions
+  - bind keys
+  - bind gamepad
+
+## What's planned next
+- tests, it this realy works
 - Packaging/installer for Windows
+
+## Nice to have
+- touch sensor, extra sensor integration - I don't have it
+- color sensor, extra sensor integration - I don't have it
+- brick for AI verion, check if it works with this code - I don't have it
 
 ## Risks / unknowns
 - BLE reliability across adapters/drivers (timing/backpressure matters)
