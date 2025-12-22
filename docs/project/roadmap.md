@@ -35,8 +35,14 @@ Status: complete (2025-12-22)
 - allow routines to call Actions,
 - allow Action instead of routine in triggers (in controler)
 
-## Milestone 6 — “Distribution”
+## Milestone 6 — “TESTS”
+- test and check manualy whathewer I can
+- fix all found bugs
+- prepare "virtual JIMU" - version of JIMU brick, for demo an auto test
+- prepare automatic test using vitual JIMU.
+
+## Milestone 7 — “Distribution”
 - Windows installer + auto-update strategy
-- Crash reporting/log export
+- Crash reporting/log export -> to log?
 - fix: set JIMU_OPEN_DEVTOOLS=1
 - logs in project, rotate 10 last
