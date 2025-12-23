@@ -44,12 +44,12 @@ or download everything as zip and unpack
 2) Install deps  
 `npm install`
 
-3) Run dev (Vite + Electron)  
+3) Run dev (Vite + Electron)  WORKS!
 `npm run dev`
 
  Ctrl+Shift+I  to show dev console for error checking
 
-4) Build + run production shell  
+4) Build + run production shell  ... Not working yet
 `npm run build`  
 `npm start`
 

@@ -8,7 +8,7 @@
     "dev:ui": "vite",
     "dev:electron": "set ELECTRON_RUN_AS_NODE=&& set ELECTRON_DEV=true&& set NODE_ENV=development&& wait-on http://localhost:5173 && electron .",
     "build": "vite build",
-    "start": "set ELECTRON_RUN_AS_NODE=&& electron ."
+    "start": "set ELECTRON_RUN_AS_NODE=&& set NODE_ENV=production&& electron ."
   },
   "dependencies": {
     "@abandonware/noble": "^1.9.2-15",
