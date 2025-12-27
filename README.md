@@ -49,7 +49,7 @@ or download everything as zip and unpack
 
  Ctrl+Shift+I  to show dev console for error checking
 
-4) Build + run production shell  ... Not working yet
+4) Build + run production shell  ... WORKS!
 `npm run build`  
 `npm start`
 
