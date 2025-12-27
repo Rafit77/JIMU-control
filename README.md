@@ -37,19 +37,25 @@ More detail: `docs/project/status.md`
 Prereqs: Windows 10/11, Bluetooth adapter, Node.js LTS.
 
 1) Clone  
+
 `git clone https://github.com/<your-org>/JIMU-control.git`  
+
 or download everything as zip and unpack
+
 `cd JIMU-control`
 
 2) Install deps  
+
 `npm install`
 
 3) Run dev (Vite + Electron)  WORKS!
+
 `npm run dev`
 
  Ctrl+Shift+I  to show dev console for error checking
 
 4) Build + run production shell  ... WORKS!
+
 `npm run build`  
 `npm start`
 
@@ -75,8 +81,18 @@ Troubleshooting and BLE notes: `docs/getting-started/windows.md`
 - I was curious... what can be achieved with AI these days if it's properly supervised.
 
 ## Dislamer
-- I'm not responslible for any damage to your JIMU.
-- PROBES - DON'T use! It is posible to pernamently change configuration of your JIMU parts with "probes" from probe folder. Don't use them if you are not 100% sure that you are ready for conseqences! Worst case scenario: your modules will no longer be detected by JIMU!!!
+- I'm not responsible for any damage to your JIMU.
+- **Probes**: Are small programs that send unverified commands to JIMU, with the expectation to observe responses or actions by modules. Because they send many commands whose purpose is unknown, it is possible to destroy the brick itself or modules. Examples of those "destructions" include changing a module ID to an unsupported one, starting an upgrade process without providing valid code, etc. I have two modules (IR and EYE) that are no longer responding to any actions, including changing their IDs.
+
 
 ## License
-See `LICENSE`.
+See [LICENSE](LICENSE) (GPL v3).
+
+## Links and explanations:
+- [Electron](https://electronjs.org/) - a framework for building cross-platform desktop apps using web technologies.
+- [React](https://reactjs.org/) - a JavaScript library for building user interfaces.
+- [Vite](https://vitejs.dev/) - a development server and build tool for modern web applications.
+- [Blockly](https://developers.google.com/blockly) - a visual programming language developed by Google.
+- [BLE (Bluetooth Low Energy)](https://en.wikipedia.org/wiki/Bluetooth_Low_Energy) - a wireless personal area network technology designed for low-power consumption.
+
+Note: This is a working draft, and some links may not be up-to-date or accurate. Please report any issues or suggestions to improve this documentation.
