@@ -538,16 +538,17 @@ const createWindow = async () => {
   });
   winRef = win;
 
+  if (process.env.JIMU_OPEN_DEVTOOLS === '1') {
+    win.webContents.once('did-finish-load', () => {
+      try {
+        win.webContents.openDevTools({ mode: 'detach' });
+      } catch (_) {
+        // ignore
+      }
+    });
+  }
+
   if (isDev) {
-    if (process.env.JIMU_OPEN_DEVTOOLS === '1') {
-      win.webContents.once('did-finish-load', () => {
-        try {
-          win.webContents.openDevTools({ mode: 'detach' });
-        } catch (_) {
-          // ignore
-        }
-      });
-    }
     await win.loadURL('http://localhost:5173');
   } else {
     const indexPath = path.join(app.getAppPath(), 'dist', 'index.html');
@@ -832,7 +833,7 @@ const main = async () => {
   await app.whenReady();
   await createWindow();
 
-  if (isDev) {
+  if (isDev || process.env.JIMU_OPEN_DEVTOOLS === '1') {
     try {
       globalShortcut.register('CommandOrControl+Shift+I', () => {
         if (!winRef || winRef.isDestroyed()) return;
@@ -841,14 +842,15 @@ const main = async () => {
     } catch (_) {
       // ignore
     }
-    app.on('will-quit', () => {
-      try {
-        globalShortcut.unregisterAll();
-      } catch (_) {
-        // ignore
-      }
-    });
   }
+
+  app.on('will-quit', () => {
+    try {
+      globalShortcut.unregisterAll();
+    } catch (_) {
+      // ignore
+    }
+  });
 };
 
 main().catch((err) => {

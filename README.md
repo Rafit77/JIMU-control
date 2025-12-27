@@ -53,6 +53,9 @@ or download everything as zip and unpack
 `npm run build`  
 `npm start`
 
+Production debugging:
+- `set JIMU_OPEN_DEVTOOLS=1&& npm start` (enables Ctrl+Shift+I and opens DevTools after load)
+
 Troubleshooting and BLE notes: `docs/getting-started/windows.md`
 
 ## Documentation
