@@ -73,6 +73,17 @@ const ensureProjectRunLog = async (projectId) => {
   await ensureDir(dir);
   const filePath = path.join(dir, `${formatRunStamp(new Date())}.log`);
   projectRunLogPathById.set(projectId, filePath);
+  try {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    const logs = entries
+      .filter((e) => e.isFile() && e.name.endsWith('.log'))
+      .map((e) => e.name)
+      .sort((a, b) => b.localeCompare(a));
+    const remove = logs.slice(10);
+    await Promise.all(remove.map((name) => fs.unlink(path.join(dir, name)).catch(() => {})));
+  } catch (_) {
+    // ignore
+  }
   return filePath;
 };
 

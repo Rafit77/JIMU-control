@@ -9,6 +9,8 @@ import * as controllerState from './controller/controller_state.js';
 import servoIconUrl from '../media/servo-icon.png';
 import wheelIconUrl from '../media/wheel-icon.png';
 
+const EMPTY_CONTROLLER = { widgets: [] };
+
 const Section = ({ title, children, style }) => (
   <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 12, marginBottom: 12, ...(style || {}) }}>
     {title ? <h2 style={{ margin: '0 0 8px 0' }}>{title}</h2> : null}
@@ -2675,7 +2677,7 @@ export default function App() {
                 connectToSelectedBrick={handleConnect}
                 calibration={currentProject?.data?.calibration || {}}
                 projectModules={currentProject?.data?.hardware?.modules || {}}
-                controllerData={currentProject?.data?.controller || { widgets: [] }}
+                controllerData={currentProject?.data?.controller || EMPTY_CONTROLLER}
                 projectRoutines={currentProject?.data?.routines}
                 projectActions={currentProject?.data?.actions || []}
                 onUpdateProjectData={updateCurrentProjectData}
@@ -2699,7 +2701,7 @@ export default function App() {
                 battery={battery}
                 routines={currentProject?.data?.routines || []}
                 actions={currentProject?.data?.actions || []}
-                controllerData={currentProject?.data?.controller || { widgets: [] }}
+                controllerData={currentProject?.data?.controller || EMPTY_CONTROLLER}
                 routineXmlRamCacheRef={routineXmlRamCacheRef}
                 actionJsonRamCacheRef={actionJsonRamCacheRef}
                 onUpdateControllerData={(updater) => {

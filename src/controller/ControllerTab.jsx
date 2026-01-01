@@ -15,6 +15,7 @@ import { createRoutineApi } from '../routines/runtime_api.js';
 import * as globalVars from '../routines/global_vars.js';
 
 const GRID_PX = 40;
+const EMPTY_WIDGETS = [];
 // Routines are non-reentrant (we skip if already running). This is an additional safety
 // window to avoid accidental double-triggering from rapid UI events.
 // Timers must support 100ms cadence, so keep this at <= TIMER_MIN_MS.
@@ -1175,7 +1176,7 @@ const ControllerTab = forwardRef(function ControllerTab(
   },
   ref,
 ) {
-  const widgets = Array.isArray(controllerData?.widgets) ? controllerData.widgets : [];
+  const [widgets, setWidgets] = useState(() => (Array.isArray(controllerData?.widgets) ? controllerData.widgets : []));
   const [runMode, setRunMode] = useState(false);
   const [selectedId, setSelectedId] = useState('');
   const [configWidgetId, setConfigWidgetId] = useState('');
@@ -1208,9 +1209,21 @@ const ControllerTab = forwardRef(function ControllerTab(
     widgetsRef.current = widgets;
   }, [widgets]);
 
-  const updateWidgets = useCallback((nextWidgets) => {
-    onUpdateControllerData?.((prev) => ({ ...(prev || {}), widgets: nextWidgets }));
-  }, [onUpdateControllerData]);
+  useEffect(() => {
+    if (!projectId) return;
+    const incoming = Array.isArray(controllerData?.widgets) ? controllerData.widgets : EMPTY_WIDGETS;
+    const next = incoming.length ? incoming : EMPTY_WIDGETS;
+    setWidgets((prev) => (prev === next ? prev : next));
+  }, [projectId, controllerData?.widgets]);
+
+  const updateWidgets = useCallback(
+    (nextWidgets) => {
+      widgetsRef.current = nextWidgets;
+      setWidgets(nextWidgets);
+      onUpdateControllerData?.((prev) => ({ ...(prev || {}), widgets: nextWidgets }));
+    },
+    [onUpdateControllerData],
+  );
 
   const normalizeLayoutForWidgets = useCallback(
     (nextLayout) => {
