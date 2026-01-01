@@ -44,13 +44,14 @@ Status: complete (2025-12-22)
 - logs in project, rotate 10 last
 
 ## Milestone 7 - Extras
-- routine code comments (to allow other understand routines)
+- routine code comments (to allow other understand routines), needed for templates
 - templates? - predefined routines for common problems:
   - joystick to: 2-wheller, 4-wheller, 6-wheeler, turning axis 4 wheeler, ...
 - examples:
   - how to show build process of model? pictures?
   - joystick to walker, 2 legs x2, 2 legs x3 jonts, 4 legs, 
   - simple interacions
+- sounds, (would require recording, and connecting to speaker)
 
 ## Milestone 7 — “Distribution”
 - Windows installer + auto-update strategy

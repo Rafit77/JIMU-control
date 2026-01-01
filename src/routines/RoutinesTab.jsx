@@ -341,7 +341,8 @@ const VariablesDialog = ({ open, workspace, getVarValue, getVarInit, setVarInit,
                 />
                 <span
                   style={{
-                    minWidth: 220,
+                    flex: '1 1 0',
+                    minWidth: 0,
                     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
                     color: '#555',
                     whiteSpace: 'nowrap',
@@ -353,10 +354,45 @@ const VariablesDialog = ({ open, workspace, getVarValue, getVarInit, setVarInit,
                   = {formatValue(getVarValue?.(v.name))}
                 </span>
                 <button
+                  disabled={(() => {
+                    const name = String(v?.name ?? '').trim();
+                    const usedElsewhere = Boolean(isVarUsedElsewhere?.(name));
+                    let usedHere = false;
+                    try {
+                      const uses = workspace?.getVariableUsesById?.(v.id);
+                      usedHere = Array.isArray(uses) && uses.length > 0;
+                    } catch (_) {
+                      usedHere = false;
+                    }
+                    return usedHere || usedElsewhere;
+                  })()}
+                  title={(() => {
+                    const name = String(v?.name ?? '').trim();
+                    const usedElsewhere = Boolean(isVarUsedElsewhere?.(name));
+                    let usedHere = false;
+                    try {
+                      const uses = workspace?.getVariableUsesById?.(v.id);
+                      usedHere = Array.isArray(uses) && uses.length > 0;
+                    } catch (_) {
+                      usedHere = false;
+                    }
+                    return usedHere || usedElsewhere
+                      ? `Cannot delete "${name}" because it is used by a routine.`
+                      : `Delete variable "${name}"`;
+                  })()}
                   onClick={async () => {
                     if (!workspace) return;
-                    if (isVarUsedElsewhere?.(v.name)) {
-                      window.alert(`Cannot delete "${v.name}" because it is used by another routine.`);
+                    const name = String(v?.name ?? '').trim();
+                    const usedElsewhere = Boolean(isVarUsedElsewhere?.(name));
+                    let usedHere = false;
+                    try {
+                      const uses = workspace?.getVariableUsesById?.(v.id);
+                      usedHere = Array.isArray(uses) && uses.length > 0;
+                    } catch (_) {
+                      usedHere = false;
+                    }
+                    if (usedHere || usedElsewhere) {
+                      window.alert(`Cannot delete "${name}" because it is used by a routine.`);
                       return;
                     }
                     const ok = window.confirm(`Delete variable "${v.name}"?`);
