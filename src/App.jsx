@@ -336,6 +336,7 @@ export default function App() {
   useEffect(() => {
     try {
       globalVars.varImport(currentProject?.data?.variables || {});
+      globalVars.arrImport?.(currentProject?.data?.arrays || {});
     } catch (_) {
       // ignore
     }
@@ -388,6 +389,13 @@ export default function App() {
           return globalVars.varExport();
         } catch (_) {
           return currentProject.data?.variables || {};
+        }
+      })(),
+      arrays: (() => {
+        try {
+          return globalVars.arrExport?.() || {};
+        } catch (_) {
+          return currentProject.data?.arrays || {};
         }
       })(),
       routines: routinesList,

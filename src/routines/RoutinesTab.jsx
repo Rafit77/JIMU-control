@@ -198,10 +198,24 @@ const RoutineNameDialog = ({ open, title, initialName, onCancel, onSubmit }) => 
   );
 };
 
-const VariablesDialog = ({ open, workspace, getVarValue, getVarInit, setVarInit, isVarUsedElsewhere, onClose }) => {
+const VariablesDialog = ({
+  open,
+  workspace,
+  getVarValue,
+  getVarInit,
+  setVarInit,
+  isVarUsedElsewhere,
+  isArrayUsedElsewhere,
+  onClose,
+}) => {
   const [newName, setNewName] = useState('');
   const [varsVersion, bumpVarsVersion] = useState(0);
+  const [arraysVersion, bumpArraysVersion] = useState(0);
   const [initEdits, setInitEdits] = useState({}); // varName -> string
+  const [arrayEditor, setArrayEditor] = useState({ open: false, name: '' });
+  const [arrayEdits, setArrayEdits] = useState({}); // index -> string value
+  const [arrayNewIndex, setArrayNewIndex] = useState('');
+  const [arrayNewValue, setArrayNewValue] = useState('');
 
   useEffect(() => {
     if (!open || !workspace) return;
@@ -224,6 +238,27 @@ const VariablesDialog = ({ open, workspace, getVarValue, getVarInit, setVarInit,
     return workspace.getAllVariables().map((v) => ({ id: v.getId(), name: v.name, type: v.type }));
   }, [workspace, open, varsVersion]);
 
+  const arrayNames = useMemo(() => {
+    const list = globalVars.arrList?.() || [];
+    return (Array.isArray(list) ? list : []).map((n) => String(n || '')).filter(Boolean);
+  }, [open, arraysVersion]);
+
+  const arrayEntries = useMemo(() => {
+    if (!arrayEditor.open || !arrayEditor.name) return [];
+    return globalVars.arrEntries?.(arrayEditor.name) || [];
+  }, [arrayEditor, arraysVersion]);
+
+  const isNameTaken = useCallback(
+    (name) => {
+      const n = String(name || '').trim();
+      if (!n) return false;
+      if (vars.some((v) => String(v?.name || '') === n)) return true;
+      if (arrayNames.some((a) => String(a || '') === n)) return true;
+      return false;
+    },
+    [vars, arrayNames],
+  );
+
   const parseLiteral = (raw) => {
     const s = String(raw ?? '').trim();
     if (!s) return 0;
@@ -239,6 +274,42 @@ const VariablesDialog = ({ open, workspace, getVarValue, getVarInit, setVarInit,
     if (!name) return;
     setVarInit?.(name, parseLiteral(raw));
   };
+
+  const parseIndex = (raw) => {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return null;
+    return Math.trunc(n);
+  };
+
+  const parseNumberValue = (raw) => {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return null;
+    return n;
+  };
+
+  const refreshArrayEdits = useCallback((entries) => {
+    const next = {};
+    for (const row of entries || []) {
+      const idx = String(row?.index ?? '');
+      const val = row?.value ?? 0;
+      next[idx] = String(val);
+    }
+    setArrayEdits(next);
+  }, []);
+
+  const applyArrayValue = useCallback((arrayName, index, raw) => {
+    const idx = parseIndex(index);
+    if (idx == null) return;
+    const value = parseNumberValue(raw);
+    if (value == null) return;
+    try {
+      globalVars.arrSet?.(arrayName, idx, value);
+      globalVars.arrInitSet?.(arrayName, idx, value);
+      bumpArraysVersion((v) => v + 1);
+    } catch (_) {
+      // ignore
+    }
+  }, []);
 
   const formatValue = (v) => {
     if (v === undefined) return '—';
@@ -265,6 +336,11 @@ const VariablesDialog = ({ open, workspace, getVarValue, getVarInit, setVarInit,
     }
     setInitEdits(next);
   }, [open, workspace, varsVersion, vars, getVarInit]);
+
+  useEffect(() => {
+    if (!arrayEditor.open) return;
+    refreshArrayEdits(arrayEntries);
+  }, [arrayEditor.open, arrayEntries, refreshArrayEdits]);
 
   if (!open) return null;
 
@@ -297,19 +373,42 @@ const VariablesDialog = ({ open, workspace, getVarValue, getVarInit, setVarInit,
               if (!workspace) return;
               const n = String(newName || '').trim();
               if (!n) return;
-              if (workspace.getVariable(n)) return;
+              if (isNameTaken(n)) return;
               workspace.createVariable(n);
+              try {
+                globalVars.varDefine?.(n, 0);
+              } catch (_) {
+                // ignore
+              }
               setNewName('');
             }}
           >
             Create
           </button>
+          <button
+            onClick={() => {
+              const n = String(newName || '').trim();
+              if (!n) return;
+              if (isNameTaken(n)) return;
+              try {
+                globalVars.arrDefine?.(n);
+                bumpArraysVersion((v) => v + 1);
+              } catch (_) {
+                // ignore
+              }
+              setNewName('');
+            }}
+            title="Create an array variable (indexed, numeric)."
+          >
+            Create array
+          </button>
         </div>
         <div style={{ marginTop: 12, border: '1px solid #ddd', borderRadius: 8, overflow: 'hidden' }}>
-          {vars.length === 0 ? (
+          {vars.length === 0 && arrayNames.length === 0 ? (
             <div style={{ padding: 12, color: '#777' }}>No variables.</div>
           ) : (
-            vars.map((v) => (
+            <>
+              {vars.map((v) => (
               <div
                 key={v.id}
                 style={{ display: 'flex', gap: 8, alignItems: 'center', padding: 8, borderTop: '1px solid #eee' }}
@@ -398,6 +497,7 @@ const VariablesDialog = ({ open, workspace, getVarValue, getVarInit, setVarInit,
                     const ok = window.confirm(`Delete variable "${v.name}"?`);
                     if (!ok) return;
                     try {
+                      globalVars.varDelete?.(name);
                       workspace.deleteVariableById(v.id);
                     } catch (_) {
                       // ignore
@@ -407,13 +507,176 @@ const VariablesDialog = ({ open, workspace, getVarValue, getVarInit, setVarInit,
                   Delete
                 </button>
               </div>
-            ))
+              ))}
+
+              {arrayNames.map((name) => {
+                const trimmed = String(name || '').trim();
+                const usedElsewhere = Boolean(isArrayUsedElsewhere?.(trimmed));
+                let usedHere = false;
+                try {
+                  const blocks = workspace?.getAllBlocks?.(false) || [];
+                  usedHere = blocks.some(
+                    (b) =>
+                      (b?.type === 'jimu_array_get' || b?.type === 'jimu_array_set' || b?.type === 'jimu_array_change') &&
+                      String(b?.getFieldValue?.('ARR') || '') === trimmed,
+                  );
+                } catch (_) {
+                  usedHere = false;
+                }
+                const blocked = usedHere || usedElsewhere;
+                return (
+                  <div
+                    key={`arr:${trimmed}`}
+                    style={{ display: 'flex', gap: 8, alignItems: 'center', padding: 8, borderTop: '1px solid #eee' }}
+                  >
+                    <span style={{ width: 18, textAlign: 'right', color: '#999' }}>[]</span>
+                    <input style={{ flex: 1, padding: 6 }} value={trimmed} readOnly title="Array variables are global across routines; rename is disabled." />
+                    <input style={{ width: 110, padding: 6, color: '#999' }} value="(init n/a)" readOnly />
+                    <span
+                      style={{
+                        flex: '1 1 0',
+                        minWidth: 0,
+                        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                        color: '#555',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                      title={`size=${globalVars.arrSize?.(trimmed) ?? 0}`}
+                    >
+                      size={globalVars.arrSize?.(trimmed) ?? 0}
+                    </span>
+                    <button
+                      onClick={() => {
+                        setArrayNewIndex('');
+                        setArrayNewValue('');
+                        setArrayEditor({ open: true, name: trimmed });
+                      }}
+                    >
+                      Values
+                    </button>
+                    <button
+                      disabled={blocked}
+                      title={blocked ? `Cannot delete "${trimmed}" because it is used by a routine.` : `Delete array "${trimmed}"`}
+                      onClick={() => {
+                        if (blocked) {
+                          window.alert(`Cannot delete "${trimmed}" because it is used by a routine.`);
+                          return;
+                        }
+                        const ok = window.confirm(`Delete array "${trimmed}"?`);
+                        if (!ok) return;
+                        try {
+                          globalVars.arrDelete?.(trimmed);
+                          bumpArraysVersion((v) => v + 1);
+                        } catch (_) {
+                          // ignore
+                        }
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                );
+              })}
+            </>
           )}
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
           <button onClick={onClose}>Close</button>
         </div>
       </div>
+
+      {arrayEditor.open ? (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10000,
+          }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setArrayEditor({ open: false, name: '' });
+          }}
+        >
+          <div style={{ background: '#fff', padding: 16, borderRadius: 10, width: 520, maxWidth: '94vw' }}>
+            <h3 style={{ marginTop: 0 }}>Array "{arrayEditor.name}"</h3>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                placeholder="Index"
+                style={{ width: 120, padding: 8 }}
+                value={arrayNewIndex}
+                onChange={(e) => setArrayNewIndex(e.target.value)}
+              />
+              <input
+                placeholder="Value"
+                style={{ width: 140, padding: 8 }}
+                value={arrayNewValue}
+                onChange={(e) => setArrayNewValue(e.target.value)}
+              />
+              <button
+                onClick={() => {
+                  const idx = parseIndex(arrayNewIndex);
+                  if (idx == null) return;
+                  const val = arrayNewValue.trim() === '' ? 0 : parseNumberValue(arrayNewValue);
+                  if (val == null) return;
+                  applyArrayValue(arrayEditor.name, idx, val);
+                  setArrayNewIndex('');
+                  setArrayNewValue('');
+                }}
+              >
+                Add index
+              </button>
+            </div>
+            <div style={{ marginTop: 12, border: '1px solid #ddd', borderRadius: 8, overflow: 'hidden', maxHeight: 260, overflowY: 'auto' }}>
+              {arrayEntries.length === 0 ? (
+                <div style={{ padding: 12, color: '#777' }}>No indexes yet.</div>
+              ) : (
+                arrayEntries.map((row) => {
+                  const idxKey = String(row?.index ?? '');
+                  const value = arrayEdits[idxKey] ?? String(row?.value ?? 0);
+                  return (
+                    <div
+                      key={idxKey}
+                      style={{ display: 'flex', gap: 8, alignItems: 'center', padding: 8, borderTop: '1px solid #eee' }}
+                    >
+                      <input style={{ width: 100, padding: 6 }} value={idxKey} readOnly />
+                      <input
+                        style={{ width: 140, padding: 6 }}
+                        value={value}
+                        onChange={(e) => setArrayEdits((prev) => ({ ...(prev || {}), [idxKey]: e.target.value }))}
+                        onKeyDown={(e) => {
+                          if (e.key !== 'Enter') return;
+                          applyArrayValue(arrayEditor.name, idxKey, value);
+                          e.currentTarget.blur();
+                        }}
+                        onBlur={() => applyArrayValue(arrayEditor.name, idxKey, value)}
+                      />
+                      <button
+                        onClick={() => {
+                          try {
+                            globalVars.arrDeleteIndex?.(arrayEditor.name, idxKey);
+                            bumpArraysVersion((v) => v + 1);
+                          } catch (_) {
+                            // ignore
+                          }
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
+              <button onClick={() => setArrayEditor({ open: false, name: '' })}>Close</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 };
@@ -452,6 +715,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
   const [varsOpen, setVarsOpen] = useState(false);
   const [, bumpVarsVersion] = useState(0);
   const [varsUsedElsewhere, setVarsUsedElsewhere] = useState(() => new Set());
+  const [arraysUsedElsewhere, setArraysUsedElsewhere] = useState(() => new Set());
 
   const workspaceRef = useRef(null);
   const hostRef = useRef(null);
@@ -554,12 +818,15 @@ const RoutinesTab = forwardRef(function RoutinesTab(
     const run = async () => {
       if (!varsOpen || !projectId || !editorRoutine?.id) {
         setVarsUsedElsewhere(new Set());
+        setArraysUsedElsewhere(new Set());
         return;
       }
       try {
         const used = new Set();
+        const usedArrays = new Set();
         const currentId = editorRoutine.id;
         const re = /<field[^>]*name="VAR"[^>]*>([\s\S]*?)<\/field>/g;
+        const reArr = /<field[^>]*name="ARR"[^>]*>([\s\S]*?)<\/field>/g;
         for (const r of Array.isArray(routines) ? routines : []) {
           if (!r?.id || r.id === currentId) continue;
           const id = String(r.id);
@@ -579,10 +846,16 @@ const RoutinesTab = forwardRef(function RoutinesTab(
             const name = String(m[1] || '').trim();
             if (name) used.add(name);
           }
+          while ((m = reArr.exec(xml))) {
+            const name = String(m[1] || '').trim();
+            if (name) usedArrays.add(name);
+          }
         }
         setVarsUsedElsewhere(used);
+        setArraysUsedElsewhere(usedArrays);
       } catch (_) {
         setVarsUsedElsewhere(new Set());
+        setArraysUsedElsewhere(new Set());
       }
     };
     run();
@@ -847,6 +1120,14 @@ const RoutinesTab = forwardRef(function RoutinesTab(
         }
       }
       if (evt.type === Blockly.Events.VAR_DELETE || evt.type === Blockly.Events.VAR_RENAME) {
+        if (evt.type === Blockly.Events.VAR_DELETE) {
+          try {
+            const name = String(evt?.varName ?? '');
+            if (name) globalVars.varDelete?.(name);
+          } catch (_) {
+            // ignore
+          }
+        }
         bumpVarsVersion((x) => x + 1);
       }
       if (suppressDirtyRef.current) return;
@@ -1434,6 +1715,17 @@ const RoutinesTab = forwardRef(function RoutinesTab(
         globalVars.varSet(varId, value);
         bumpVarsVersion((v) => v + 1);
       },
+      arrGet: (name, index) => {
+        return globalVars.arrGet?.(String(name ?? ''), index) ?? 0;
+      },
+      arrSet: (name, index, value) => {
+        globalVars.arrSet?.(String(name ?? ''), index, value);
+        bumpVarsVersion((v) => v + 1);
+      },
+      arrChange: (name, index, delta) => {
+        globalVars.arrChange?.(String(name ?? ''), index, delta);
+        bumpVarsVersion((v) => v + 1);
+      },
       wait,
       setServoPosition,
       setServoPositionsTimed,
@@ -1842,6 +2134,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
             getVarInit={(varName) => globalVars.varInitGet?.(String(varName ?? ''))}
             setVarInit={(varName, initValue) => globalVars.varInitSet?.(String(varName ?? ''), initValue)}
             isVarUsedElsewhere={(varName) => varsUsedElsewhere.has(String(varName ?? '').trim())}
+            isArrayUsedElsewhere={(arrName) => arraysUsedElsewhere.has(String(arrName ?? '').trim())}
             onClose={() => setVarsOpen(false)}
           />
         </div>

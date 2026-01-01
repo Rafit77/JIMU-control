@@ -2017,17 +2017,16 @@ const ControllerTab = forwardRef(function ControllerTab(
             }}
           />
         ) : null}
-        {gridMounted ? (
-          <GridLayout
+        <GridLayout
           className="layout"
           layout={layout}
-          width={snappedWidth}
+          width={gridMounted ? snappedWidth : Math.max(GRID_PX, Number(snappedWidth || 0) || 1200)}
           gridConfig={{
             cols,
-             rowHeight: GRID_PX,
-             margin: [0, 0],
-             containerPadding: [0, 0],
-           }}
+            rowHeight: GRID_PX,
+            margin: [0, 0],
+            containerPadding: [0, 0],
+          }}
           compactor={overlapNoCompactor}
           dragConfig={{
             enabled: !runMode,
@@ -2367,8 +2366,7 @@ const ControllerTab = forwardRef(function ControllerTab(
               </div>
             );
           })}
-          </GridLayout>
-        ) : null}
+        </GridLayout>
       </div>
 
       <WidgetConfig

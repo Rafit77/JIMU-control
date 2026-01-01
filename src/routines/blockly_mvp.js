@@ -2,6 +2,7 @@ import * as Blockly from 'blockly';
 import 'blockly/blocks.js';
 import en from 'blockly/msg/en.js';
 import jsPkg from 'blockly/javascript.js';
+import * as globalVars from './global_vars.js';
 
 const { javascriptGenerator } = jsPkg;
 
@@ -32,6 +33,16 @@ const clampMutatorItemCount = (value, max = 8) => {
   if (!Number.isFinite(n) || n <= 0) return 1;
   return Math.min(max, Math.floor(n));
 };
+
+const makeArrayNameDropdown = () =>
+  new Blockly.FieldDropdown(function () {
+    const current = String(this?.getValue?.() ?? '');
+    const list = globalVars.arrList?.() || [];
+    const opts = (Array.isArray(list) ? list : []).map((n) => [String(n), String(n)]);
+    if (current && !opts.some((o) => o?.[1] === current)) opts.unshift([current, current]);
+    if (opts.length === 0) opts.push(['(no arrays)', '']);
+    return opts;
+  });
 
 let idOptionsProvider = null;
 export const setIdOptionsProvider = (fn) => {
@@ -1264,6 +1275,38 @@ const defineBlocksOnce = (() => {
       },
     };
 
+    Blockly.Blocks.jimu_array_get = {
+      init() {
+        this.appendDummyInput().appendField('array').appendField(makeArrayNameDropdown(), 'ARR').appendField('at index');
+        this.appendValueInput('INDEX').setCheck('Number');
+        this.setOutput(true, 'Number');
+        this.setColour(330);
+        this.setTooltip('Read an array cell. If no value was assigned for the index, returns 0.');
+      },
+    };
+    Blockly.Blocks.jimu_array_set = {
+      init() {
+        this.appendDummyInput().appendField('set array').appendField(makeArrayNameDropdown(), 'ARR').appendField('at index');
+        this.appendValueInput('INDEX').setCheck('Number');
+        this.appendValueInput('VALUE').setCheck('Number').appendField('to');
+        this.setPreviousStatement(true);
+        this.setNextStatement(true);
+        this.setColour(330);
+        this.setTooltip('Set an array cell value (indices can be negative).');
+      },
+    };
+    Blockly.Blocks.jimu_array_change = {
+      init() {
+        this.appendDummyInput().appendField('change array').appendField(makeArrayNameDropdown(), 'ARR').appendField('at index');
+        this.appendValueInput('INDEX').setCheck('Number');
+        this.appendValueInput('DELTA').setCheck('Number').appendField('by');
+        this.setPreviousStatement(true);
+        this.setNextStatement(true);
+        this.setColour(330);
+        this.setTooltip('Add a delta to an array cell (missing cells default to 0).');
+      },
+    };
+
     javascriptGenerator.forBlock.jimu_wait = (block) => {
       const ms = javascriptGenerator.valueToCode(block, 'MS', javascriptGenerator.ORDER_NONE) || '0';
       return `await api.wait(${ms});\n`;
@@ -1310,6 +1353,23 @@ const defineBlocksOnce = (() => {
       const delta = javascriptGenerator.valueToCode(block, 'DELTA', javascriptGenerator.ORDER_ADDITION) || '0';
       const k = JSON.stringify(String(name || ''));
       return `{\n  const __v = api.varGet(${k});\n  api.varSet(${k}, (Number(__v ?? 0) + Number(${delta})));\n}\n`;
+    };
+    javascriptGenerator.forBlock.jimu_array_get = (block) => {
+      const name = String(block.getFieldValue('ARR') || '');
+      const idx = javascriptGenerator.valueToCode(block, 'INDEX', javascriptGenerator.ORDER_NONE) || '0';
+      return [`api.arrGet(${JSON.stringify(name)}, ${idx})`, javascriptGenerator.ORDER_ATOMIC];
+    };
+    javascriptGenerator.forBlock.jimu_array_set = (block) => {
+      const name = String(block.getFieldValue('ARR') || '');
+      const idx = javascriptGenerator.valueToCode(block, 'INDEX', javascriptGenerator.ORDER_NONE) || '0';
+      const value = javascriptGenerator.valueToCode(block, 'VALUE', javascriptGenerator.ORDER_NONE) || '0';
+      return `api.arrSet(${JSON.stringify(name)}, ${idx}, ${value});\n`;
+    };
+    javascriptGenerator.forBlock.jimu_array_change = (block) => {
+      const name = String(block.getFieldValue('ARR') || '');
+      const idx = javascriptGenerator.valueToCode(block, 'INDEX', javascriptGenerator.ORDER_NONE) || '0';
+      const delta = javascriptGenerator.valueToCode(block, 'DELTA', javascriptGenerator.ORDER_NONE) || '0';
+      return `api.arrChange(${JSON.stringify(name)}, ${idx}, ${delta});\n`;
     };
     javascriptGenerator.forBlock.jimu_emergency_stop = () => 'await api.emergencyStop();\n';
     javascriptGenerator.forBlock.jimu_set_servo_timed = (block) => {
@@ -1648,8 +1708,36 @@ export const createWorkspace = (el, { initialXmlText, routineId } = {}) => {
   // Variables category without the built-in "Create variable" prompt button.
   // (The app has its own Variables dialog.)
   workspace.registerToolboxCategoryCallback?.('JIMU_VARIABLES', (ws) => {
-    if (Blockly?.Variables?.flyoutCategoryBlocks) return Blockly.Variables.flyoutCategoryBlocks(ws);
-    return [];
+    const blocks = Blockly?.Variables?.flyoutCategoryBlocks ? Blockly.Variables.flyoutCategoryBlocks(ws) : [];
+
+    const addArrayBlock = (type, inputs = {}) => {
+      const b = xmlCreateElement('block');
+      b.setAttribute('type', type);
+      for (const [inputName, shadowDef] of Object.entries(inputs || {})) {
+        const v = xmlCreateElement('value');
+        v.setAttribute('name', inputName);
+        const s = xmlCreateElement('shadow');
+        s.setAttribute('type', shadowDef.type);
+        for (const [fieldName, fieldValue] of Object.entries(shadowDef.fields || {})) {
+          const f = xmlCreateElement('field');
+          f.setAttribute('name', fieldName);
+          f.textContent = String(fieldValue);
+          s.appendChild(f);
+        }
+        v.appendChild(s);
+        b.appendChild(v);
+      }
+      blocks.push(b);
+    };
+
+    const sep = xmlCreateElement('sep');
+    sep.setAttribute('gap', '8');
+    blocks.push(sep);
+    addArrayBlock('jimu_array_get', { INDEX: { type: 'math_number', fields: { NUM: 0 } } });
+    addArrayBlock('jimu_array_set', { INDEX: { type: 'math_number', fields: { NUM: 0 } }, VALUE: { type: 'math_number', fields: { NUM: 0 } } });
+    addArrayBlock('jimu_array_change', { INDEX: { type: 'math_number', fields: { NUM: 0 } }, DELTA: { type: 'math_number', fields: { NUM: 1 } } });
+
+    return blocks;
   });
 
   if (initialXmlText) {
