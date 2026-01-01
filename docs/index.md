@@ -2,6 +2,7 @@
 
 ## Getting started
 - Windows install & run: `getting-started/windows.md`
+- Windows release build (.exe): `getting-started/windows.md`
 
 ## Architecture
 - Overview (start here): `architecture.md`

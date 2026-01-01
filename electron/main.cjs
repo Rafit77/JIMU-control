@@ -6,10 +6,9 @@ const { pathToFileURL } = require('node:url');
 
 const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, globalShortcut } = electron;
 
-const isDev =
-  process.env.VITE_DEV_SERVER === 'true' ||
-  process.env.ELECTRON_DEV === 'true' ||
-  process.env.NODE_ENV !== 'production';
+// Packaged apps usually don't have NODE_ENV=production, so use Electron's packaged signal.
+// Keep explicit env toggles for local debugging.
+const isDev = !app.isPackaged || process.env.VITE_DEV_SERVER === 'true' || process.env.ELECTRON_DEV === 'true';
 
 let jimu = null;
 let JimuBleClient = null;
@@ -26,7 +25,9 @@ const safeName = (name) =>
     .replace(/\s+/g, ' ')
     .slice(0, 64) || 'Project';
 
-const getSavesRoot = () => path.join(app.getAppPath(), 'jimu_saves');
+// In packaged builds `app.getAppPath()` points inside app.asar (read-only), so project saves must live in a writable folder.
+// Keep the legacy `./jimu_saves` behavior for dev, but use Electron's per-app userData in production.
+const getSavesRoot = () => (isDev ? path.join(app.getAppPath(), 'jimu_saves') : path.join(app.getPath('userData'), 'jimu_saves'));
 const getProjectDir = (projectId) => path.join(getSavesRoot(), projectId);
 const getRoutinesDir = (projectId) => path.join(getProjectDir(projectId), 'routines');
 const getRoutinePath = (projectId, routineId) => path.join(getRoutinesDir(projectId), `${routineId}.xml`);

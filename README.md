@@ -59,6 +59,17 @@ or download everything as zip and unpack
 `npm run build`  
 `npm start`
 
+## Release (Windows .exe)
+- Portable single-file `.exe`: `npm run release` (outputs to `release/`)
+- Installer `.exe` (NSIS): `npm run release:win:setup` (outputs to `release/`)
+
+Project storage:
+- Dev: `./jimu_saves/`
+- Packaged builds: Electron `userData` `jimu_saves/`
+
+If `npm run release` fails with `Cannot create symbolic link ... A required privilege is not held by the client`, enable **Windows Developer Mode** (or run the build from an elevated/admin terminal).
+To debug the release exe: `set JIMU_OPEN_DEVTOOLS=1&& .\\release\\JIMU-control 0.0.1.exe`
+
 Production debugging:
 - `set JIMU_OPEN_DEVTOOLS=1&& npm start` (enables Ctrl+Shift+I and opens DevTools after load)
 

@@ -37,11 +37,12 @@ Status: complete (2025-12-22)
 - allow Action instead of routine in triggers (in controler)
 
 ## Milestone 6 — “TESTS”
-- test and check manualy whathewer I can
-- fix all found bugs
-- prepare "virtual JIMU" - version of JIMU brick, for demo an auto test
-- prepare automatic test using vitual JIMU.
-- logs in project, rotate 10 last
+[ ] test and check manualy whathewer I can
+[ ] fix all found bugs
+[ ] prepare "virtual JIMU" - version of JIMU brick, for demo an auto test
+[ ] prepare automatic test using vitual JIMU.
+[X] logs in project, rotate 10 last
+[X] array variables
 
 ## Milestone 7 - Extras
 - routine code comments (to allow other understand routines), needed for templates
@@ -54,7 +55,10 @@ Status: complete (2025-12-22)
 - sounds, (would require recording, and connecting to speaker)
 
 ## Milestone 7 — “Distribution”
-- Windows installer + auto-update strategy
-- Crash reporting/log export -> to log?
-- fix: set JIMU_OPEN_DEVTOOLS=1
+[X] Windows installer 
+[ ] show version number in title bar
+[ ] icon for project
+[ ] auto-update strategy
+[ ] Crash reporting/log export -> to log?
+[ ] fix: set JIMU_OPEN_DEVTOOLS=1
 
