@@ -171,11 +171,26 @@ export class Jimu extends EventEmitter {
     this._batteryTimer = null;
     this._sendQueue = Promise.resolve();
     this._lastSendAt = 0;
+    this._sendQueuePending = 0; // commands waiting (not including current in-flight)
+    this._sendQueueInFlight = false; // a command is currently being sent/awaited
+    this._sendQueueCurrentWaitMs = 0; // enqueue->send delay for current command
     this.singleFlight = true;
     this.singleFlightTimeoutMs = 800;
     this._onFrame = this._onFrame.bind(this);
     this._onDisconnect = this._onDisconnect.bind(this);
     this._onFrameError = this._onFrameError.bind(this);
+  }
+
+  _emitSendQueueStats() {
+    this.emit('sendQueue', this.getSendQueueStats());
+  }
+
+  getSendQueueStats() {
+    return {
+      pending: Math.max(0, Number(this._sendQueuePending) || 0),
+      inFlight: Boolean(this._sendQueueInFlight),
+      currentWaitMs: Math.max(0, Number(this._sendQueueCurrentWaitMs) || 0),
+    };
   }
 
   async connect(target) {
@@ -206,6 +221,10 @@ export class Jimu extends EventEmitter {
   async disconnect() {
     this._stopMaintenance();
     this.state.connected = false;
+    this._sendQueuePending = 0;
+    this._sendQueueInFlight = false;
+    this._sendQueueCurrentWaitMs = 0;
+    this._emitSendQueueStats();
     this.client.removeListener('frame', this._onFrame);
     this.client.removeListener('frameError', this._onFrameError);
     this.client.removeListener('disconnect', this._onDisconnect);
@@ -215,6 +234,10 @@ export class Jimu extends EventEmitter {
   _onDisconnect() {
     this._stopMaintenance();
     this.state.connected = false;
+    this._sendQueuePending = 0;
+    this._sendQueueInFlight = false;
+    this._sendQueueCurrentWaitMs = 0;
+    this._emitSendQueueStats();
     this.client.removeListener('frame', this._onFrame);
     this.client.removeListener('frameError', this._onFrameError);
     this.client.removeListener('disconnect', this._onDisconnect);
@@ -378,23 +401,41 @@ export class Jimu extends EventEmitter {
   }
 
   async _send(payload, { blockUntil = null } = {}) {
+    const enqueuedAt = Date.now();
+    this._sendQueuePending += 1;
+    this._emitSendQueueStats();
     const run = async () => {
+      this._sendQueuePending = Math.max(0, this._sendQueuePending - 1);
+      this._sendQueueInFlight = true;
+      this._sendQueueCurrentWaitMs = 0;
+      this._emitSendQueueStats();
       const now = Date.now();
       const waitMs = Math.max(0, (this.commandSpacingMs ?? 0) - (now - this._lastSendAt));
       if (waitMs) await sleep(waitMs);
+      this._sendQueueCurrentWaitMs = Math.max(0, Date.now() - enqueuedAt);
+      this._emitSendQueueStats();
       try {
         const cmd = payload?.[0];
         this.emit('tx', { payload: Buffer.from(payload || []), cmd, meta: { cmd } });
       } catch (_) {
         // ignore logging issues; never block device writes
       }
-      const res = await this.client.send(payload);
-      this._lastSendAt = Date.now();
-      const cmd = payload?.[0];
-      const autoBlock =
-        blockUntil || (this.singleFlight && typeof cmd === 'number' ? this._waitForFrameCmd(cmd, { timeoutMs: this.singleFlightTimeoutMs }).catch(() => null) : null);
-      if (autoBlock) await autoBlock;
-      return res;
+      try {
+        const res = await this.client.send(payload);
+        this._lastSendAt = Date.now();
+        const cmd = payload?.[0];
+        const autoBlock =
+          blockUntil ||
+          (this.singleFlight && typeof cmd === 'number'
+            ? this._waitForFrameCmd(cmd, { timeoutMs: this.singleFlightTimeoutMs }).catch(() => null)
+            : null);
+        if (autoBlock) await autoBlock;
+        return res;
+      } finally {
+        this._sendQueueInFlight = false;
+        this._sendQueueCurrentWaitMs = 0;
+        this._emitSendQueueStats();
+      }
     };
     this._sendQueue = this._sendQueue.then(run, run);
     return this._sendQueue;

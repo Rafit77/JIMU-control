@@ -1238,6 +1238,7 @@ const ControllerTab = forwardRef(function ControllerTab(
   const timerFlashUntilRef = useRef(new Map()); // widgetId -> ts
   const pendingLayoutRef = useRef(null); // Layout[] or null
   const [, bumpTimerFlash] = useState(0);
+  const [sendQueueStats, setSendQueueStats] = useState({ pending: 0, inFlight: false, currentWaitMs: 0 });
 
   const getWidget = (id) => widgets.find((w) => String(w?.id) === String(id)) || null;
   const selectedWidget = getWidget(selectedId);
@@ -1976,6 +1977,19 @@ const ControllerTab = forwardRef(function ControllerTab(
   const [, bump] = useState(0);
   useEffect(() => controllerState.subscribe(() => bump((x) => x + 1)), []);
 
+  useEffect(() => {
+    if (!ipc) return;
+    const onSendQueue = (_e, stats) => {
+      setSendQueueStats({
+        pending: Math.max(0, Number(stats?.pending ?? 0) || 0),
+        inFlight: Boolean(stats?.inFlight),
+        currentWaitMs: Math.max(0, Number(stats?.currentWaitMs ?? 0) || 0),
+      });
+    };
+    ipc.on('jimu:sendQueue', onSendQueue);
+    return () => ipc.removeListener('jimu:sendQueue', onSendQueue);
+  }, [ipc]);
+
   const layout = useMemo(() => widgets.map((w) => w.layout || { i: w.id, x: 0, y: 0, w: 3, h: 2 }), [widgets]);
 
   if (!projectId) return <div style={{ color: '#777' }}>Open a project first.</div>;
@@ -1990,6 +2004,12 @@ const ControllerTab = forwardRef(function ControllerTab(
           </strong>
         </span>
         <button onClick={() => setRunMode((p) => !p)}>{runMode ? 'Design' : 'Run'}</button>
+        {runMode ? (
+          <span style={{ color: '#555', fontSize: 12 }}>
+            JIMU queue: <strong>{sendQueueStats.pending}</strong>, wait:{' '}
+            <strong>{sendQueueStats.inFlight ? `${Math.round(sendQueueStats.currentWaitMs)}ms` : '-'}</strong>
+          </span>
+        ) : null}
         {runMode && status !== 'Connected' && (
           <span style={{ color: '#c62828', fontWeight: 800 }}>JIMU not connected</span>
         )}

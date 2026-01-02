@@ -597,6 +597,7 @@ const attachJimuEvents = () => {
   jimu.on('servoPosition', (pos) => sendToRenderer('jimu:servoPos', pos));
   jimu.on('tx', (frame) => sendToRenderer('jimu:tx', frame));
   jimu.on('frame', (frame) => sendToRenderer('jimu:frame', frame));
+  jimu.on('sendQueue', (stats) => sendToRenderer('jimu:sendQueue', stats));
   jimu.on('sensor', (evt) => sendToRenderer('jimu:sensor', evt));
   jimu.on('commandResult', (evt) => sendToRenderer('jimu:commandResult', evt));
   jimu.on('deviceError', (evt) => sendToRenderer('jimu:deviceError', evt));
