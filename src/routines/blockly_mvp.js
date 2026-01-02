@@ -125,6 +125,67 @@ const getNumericIdOptions = (kind) =>
     .filter((n) => Number.isFinite(n) && n > 0)
     .sort((a, b) => a - b);
 
+let workspaceCommentMenuRegistered = false;
+const ensureWorkspaceCommentMenuItem = () => {
+  if (workspaceCommentMenuRegistered) return;
+  workspaceCommentMenuRegistered = true;
+
+  try {
+    const registry = Blockly?.ContextMenuRegistry?.registry;
+    const ScopeType = Blockly?.ContextMenuRegistry?.ScopeType;
+    if (!registry || !ScopeType) return;
+    if (registry.getItem('jimu_workspace_comment')) return;
+
+    registry.register({
+      id: 'jimu_workspace_comment',
+      scopeType: ScopeType.WORKSPACE,
+      weight: 3, // between undo/redo and cleanup/delete-all
+      displayText: () => Blockly?.Msg?.ADD_COMMENT || 'Add comment',
+      preconditionFn: (scope) => {
+        const ws = scope?.workspace;
+        if (!ws) return 'hidden';
+        if (ws.options?.readOnly) return 'hidden';
+        if (!ws.options?.comments) return 'hidden';
+        return 'enabled';
+      },
+      callback: (scope) => {
+        const ws = scope?.workspace;
+        if (!ws) return;
+        const WorkspaceCommentSvg = Blockly?.WorkspaceCommentSvg;
+        if (!WorkspaceCommentSvg) return;
+
+        const text = Blockly?.Msg?.WORKSPACE_COMMENT_DEFAULT_TEXT || 'Comment';
+        const c = new WorkspaceCommentSvg(ws, text, WorkspaceCommentSvg.DEFAULT_SIZE, WorkspaceCommentSvg.DEFAULT_SIZE);
+
+        const m = typeof ws.getMetrics === 'function' ? ws.getMetrics() : null;
+        const x = Number(m?.viewLeft ?? 0) + Number(m?.viewWidth ?? 0) / 2;
+        const y = Number(m?.viewTop ?? 0) + Number(m?.viewHeight ?? 0) / 2;
+        if (Number.isFinite(x) && Number.isFinite(y)) {
+          try {
+            c.moveBy(x, y);
+          } catch (_) {
+            // ignore
+          }
+        }
+
+        try {
+          if (ws.rendered) {
+            c.initSvg?.();
+            c.render?.();
+            c.select?.();
+          }
+          c.setVisible?.(true);
+          c.focus?.();
+        } catch (_) {
+          // ignore
+        }
+      },
+    });
+  } catch (_) {
+    // ignore
+  }
+};
+
 const defineBlocksOnce = (() => {
   let done = false;
   return () => {
@@ -1722,9 +1783,11 @@ export const getBlocklyToolbox = () => {
 
 export const createWorkspace = (el, { initialXmlText, routineId } = {}) => {
   defineBlocksOnce();
+  ensureWorkspaceCommentMenuItem();
   const workspace = Blockly.inject(el, {
     toolbox: getBlocklyToolbox(),
     trashcan: true,
+    comments: true,
     grid: { spacing: 20, length: 3, colour: '#ccc', snap: true },
     zoom: { controls: true, wheel: true, startScale: 0.9, maxScale: 2.0, minScale: 0.3 },
   });

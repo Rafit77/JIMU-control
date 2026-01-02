@@ -43,21 +43,24 @@ Status: complete (2025-12-22)
 [ ] prepare automatic test using vitual JIMU.
 [X] logs in project, rotate 10 last
 [X] array variables
+[ ] some spacial visualisations for array variables
+[ ] make joystick faster
+
 
 ## Milestone 7 - Extras
 [x] round or square joystick limiter
-- routine code comments (to allow other understand routines), needed for templates
-- templates? - predefined routines for common problems:
+[x] routine code comments (to allow other understand routines), needed for templates
+[ ] templates? - predefined routines for common problems:
   - joystick to: 2-wheller, 4-wheller, 6-wheeler, turning axis 4 wheeler, ...
 - examples:
   - how to show build process of model? pictures?
   - joystick to walker, 2 legs x2, 2 legs x3 jonts, 4 legs, 
   - simple interacions
-- sounds, (would require recording, and connecting to speaker)
+[ ] sounds, (would require recording, and connecting to speaker)
 
 ## Milestone 7 — “Distribution”
 [X] Windows installer 
-[ ] show version number in title bar
+[x] show version number in title bar
 [ ] icon for project
 [ ] auto-update strategy
 [ ] Crash reporting/log export -> to log?
