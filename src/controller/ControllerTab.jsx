@@ -13,6 +13,7 @@ import {
 } from '../routines/blockly_mvp.js';
 import { createRoutineApi } from '../routines/runtime_api.js';
 import * as globalVars from '../routines/global_vars.js';
+import * as routineProfiler from '../routines/routine_profiler.js';
 
 const GRID_PX = 40;
 const EMPTY_WIDGETS = [];
@@ -1445,12 +1446,22 @@ const ControllerTab = forwardRef(function ControllerTab(
             const subSrc = xmlTextToAsyncJs(subXml, { debug: true });
             // eslint-disable-next-line no-new-func
             const subFn = new Function('api', subSrc);
-            await subFn(api);
+            const stopProfile = routineProfiler.start(subId);
+            try {
+              await subFn(api);
+            } finally {
+              stopProfile?.();
+            }
           } finally {
             stack.pop();
           }
         };
-        await fn(api);
+        const stopProfile = routineProfiler.start(rid);
+        try {
+          await fn(api);
+        } finally {
+          stopProfile?.();
+        }
       } catch (e) {
         addLog?.(`[Controller] Routine error: ${e?.message || String(e)}`);
       } finally {
@@ -1697,6 +1708,7 @@ const ControllerTab = forwardRef(function ControllerTab(
   // Publish initial widget values into the controller state store when entering run mode.
   useEffect(() => {
     if (!runMode) return;
+    routineProfiler.clear?.();
     try {
       globalVars.varResetToInit?.();
     } catch (_) {

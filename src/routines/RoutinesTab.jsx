@@ -13,8 +13,16 @@ import {
 import { batteryPercentFromVolts } from '../battery.js';
 import * as globalVars from './global_vars.js';
 import * as controllerState from '../controller/controller_state.js';
+import * as routineProfiler from './routine_profiler.js';
 
 const defaultRoutineXml = '<xml xmlns="https://developers.google.com/blockly/xml"></xml>\n';
+
+const formatMs = (ms) => {
+  const n = Number(ms ?? 0);
+  if (!Number.isFinite(n)) return '-';
+  if (n < 1000) return `${Math.round(n)}ms`;
+  return `${(n / 1000).toFixed(2)}s`;
+};
 const newId = () => {
   try {
     if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
@@ -714,6 +722,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
   const [nameDialog, setNameDialog] = useState({ open: false, mode: 'create', routineId: null, initialName: '' });
   const [varsOpen, setVarsOpen] = useState(false);
   const [, bumpVarsVersion] = useState(0);
+  const [, bumpProfiler] = useState(0);
   const [varsUsedElsewhere, setVarsUsedElsewhere] = useState(() => new Set());
   const [arraysUsedElsewhere, setArraysUsedElsewhere] = useState(() => new Set());
 
@@ -727,6 +736,8 @@ const RoutinesTab = forwardRef(function RoutinesTab(
   const actionsRuntimeRef = useRef(new Map()); // actionId -> { stopRequested }
   const editorInitialXmlRef = useRef(''); // xml used for workspace initialization (avoids async setState ordering issues)
   const suppressDirtyRef = useRef(false);
+
+  useEffect(() => routineProfiler.subscribe(() => bumpProfiler((x) => x + 1)), []);
 
   const setRoutinesRam = useCallback(
     (updater) => {
@@ -2017,6 +2028,9 @@ const RoutinesTab = forwardRef(function RoutinesTab(
 
   if (!projectId) return <div style={{ color: '#777' }}>Open a project first.</div>;
 
+  const profSnap = routineProfiler.getSnapshot();
+  const profTotals = routineProfiler.getTotals();
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       {!editorRoutine ? (
@@ -2026,7 +2040,9 @@ const RoutinesTab = forwardRef(function RoutinesTab(
               Create routine
             </button>
             <button onClick={refreshList}>Refresh</button>
-            <div style={{ marginLeft: 'auto', color: '#777' }}>{routines.length} routine(s)</div>
+            <div style={{ marginLeft: 'auto', color: '#777' }}>
+              {routines.length} routine(s) • Controller profiler: {profTotals.count} run(s), avg {formatMs(profTotals.avgMs)}
+            </div>
           </div>
           <div style={{ border: '1px solid #ddd', borderRadius: 8, overflow: 'hidden' }}>
             {routines.length === 0 ? (
@@ -2042,6 +2058,19 @@ const RoutinesTab = forwardRef(function RoutinesTab(
                     <div style={{ color: '#777', fontSize: 12 }}>
                       {r.updatedAt ? `Updated: ${r.updatedAt}` : ''}
                     </div>
+                    {(() => {
+                      const s = profSnap?.[String(r.id || '')];
+                      const count = Number(s?.count ?? 0) || 0;
+                      if (!count) return null;
+                      const totalMs = Number(s?.totalMs ?? 0) || 0;
+                      const maxMs = Number(s?.maxMs ?? 0) || 0;
+                      const avgMs = totalMs / count;
+                      return (
+                        <div style={{ color: '#0b3d91', fontSize: 12 }}>
+                          Controller: {count} run(s), total {formatMs(totalMs)}, avg {formatMs(avgMs)}, max {formatMs(maxMs)}
+                        </div>
+                      );
+                    })()}
                   </div>
                   <button onClick={() => loadRoutine(r)}>Open</button>
                   <button onClick={() => setNameDialog({ open: true, mode: 'rename', routineId: r.id, initialName: r.name })}>
