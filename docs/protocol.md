@@ -8,6 +8,10 @@
 - Working commands: init (0x36, 0x01, 0x08), enable (0x71), battery (0x27), ping (0x03), servo set/read (0x07/0x09/0x0B), motor (0x90 single/dual), sensor read (0x7E), ID changes (0x74/0x0C), eye LEDs (0x78/0x79), error query (0x05).
 - Timing: reliable writes at ~25-50 ms spacing; 10 ms/5 ms produced drops. Notifications typically ~60 ms apart with jitter to ~1.3 s.
 - **Critical constraint (no overlap):** only one command may be in flight at a time. After sending a command that expects a response (e.g. `0x08`, `0x27`, `0x0B`, `0x7E`), do not send any other command until the corresponding response arrives (or a timeout is hit). Overlapping commands can cause missing responses and repeated timeouts.
+
+Implementation note (this repo):
+- The app enforces the “no overlap” rule with an SDK-level command queue (`jimu/jimu.js`) that serializes all device writes.
+- High-rate actuator outputs (servos/motors/LEDs) are typically sent as **enqueue-only** commands (fire-and-forget), with coalescing to avoid backlog (latest wins per target).
 - BLE layout: custom service starting with `49535343`; characteristic order not locked (notify/write selection heuristics in code). Needs on-device UUID confirmation.
 - Missing/needs check: service/characteristic UUIDs and order; meaning of 0x72, 0x2b, 0x2c, 0x3b, 0x91, 0x92; speaker control path; sensor value scales/units; eye segment masks; MTU limits; multi-frame notification splitting rules.
 - Redundant/raw sections below are kept for now-tagged "(review/remove?)" where they look like unprocessed captures or duplicated notes.

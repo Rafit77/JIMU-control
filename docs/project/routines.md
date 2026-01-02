@@ -88,6 +88,13 @@ Notes:
 
 ## Block catalog (as implemented)
 
+## Device command semantics (queue vs wait)
+The runtime uses an SDK-level command queue to serialize BLE access. Blocks fall into two categories:
+- **Enqueue-only (fire-and-forget):** returns immediately after enqueue. The SDK may coalesce queued actuator commands (latest wins per target).
+- **Await response:** waits for a specific reply (or timeout). Used for sensor reads and status/battery operations.
+
+This matters for performance: in Controller/joystick scenarios, you generally want enqueue-only outputs and explicit `wait` blocks only when needed for timing.
+
 ### Control
 - `if / if-else` (`controls_if`): branch based on a boolean condition.
 - `repeat N` (`controls_repeat_ext`): run nested statements N times.
@@ -147,10 +154,13 @@ Variables dialog rules:
 - `get joystick [name] [x|y]` (`jimu_get_joystick`) returns a number (placeholder until Controller widgets exist).
 - `get button [name]` (`jimu_get_button`) returns a boolean (Controller Button widget state).
 
+Notes:
+- These blocks **await responses** from the brick (and can block on timeouts), so they are slower than enqueue-only actuator blocks.
+
 ### Movement
 - `set servo position` (`jimu_set_servo_timed`)
   - Mutator block: add/remove servo rows; each row selects a servo ID and provides its target degrees.
-  - Sends one multi-servo position command, then waits `[duration ms]`.
+  - Sends one multi-servo position command (duration is encoded as speed); **does not wait**. Add an explicit `wait` block if you need timing.
 - `rotate servo` (`jimu_rotate_servo`)
   - Mutator block: add/remove servo ID rows (IDs must be distinct).
   - Speed is shared, clamped to configured limits; negative speed reverses direction internally.
@@ -177,6 +187,9 @@ Variables dialog rules:
 - Controller placeholders (until Controller widgets exist):
   - `indicator [name] color [color]` (`jimu_indicator_color`)
   - `display [name] show [value]` (`jimu_display_show`)
+
+Notes:
+- Eye LED and Ultrasonic LED blocks enqueue their commands (do not wait for a device response).
 
 ### Debug
 - `Print [value]` (`jimu_print`)

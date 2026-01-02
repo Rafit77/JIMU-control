@@ -29,6 +29,28 @@ Provide a single, tested API for the app/runtime to control a real JIMU brick, h
 - **Notification parsing**: device can concatenate multiple frames into one notification; parser must split `FB ... ED`.
 - **Backpressure**: always subscribe to notifications and drain them; otherwise writes can ƒ?ostallƒ??.
 
+## Command queue (current implementation)
+The SDK serializes all device writes through a single internal command queue:
+- Only one BLE command is sent at a time (enforces the “no overlap” rule).
+- Writes are paced using a minimum spacing (default ~25ms).
+- Some commands are **enqueue-only** (fire-and-forget): they enqueue and return immediately (used for high-rate controller/routine outputs).
+- Some commands are **awaited**: they enqueue and then wait for a matching response/ack (used for reads and status/battery calls).
+
+### Queue heuristics (coalescing)
+To avoid backlog during high-rate inputs (joystick/slider), the SDK applies two heuristics to actuator commands:
+1. **Exact duplicate suppression**: if the exact same command payload is already queued/in-flight, the new enqueue is ignored.
+2. **Latest-wins per target**: if a new command targets the same servo/motor/eye/ultrasonic LED as an older queued command, the older one is dropped before sending.
+
+Notes:
+- Coalescing is applied only to actuator outputs (servos/motors/LEDs), not to reads (IR/US/servo read/status/battery).
+- Emergency Stop flushes the pending queue before sending stop commands (in-flight commands cannot be interrupted).
+
+### Queue telemetry
+The SDK emits `sendQueue` telemetry events with:
+- `pending`: queued commands count (pending, not including current in-flight)
+- `inFlight`: whether a command is currently being sent/awaited
+- `currentWaitMs`: enqueue→send delay for the current command
+
 ## Design contract (for UI/runtime)
 - All public SDK calls are async and return decoded results or a typed error.
 - The SDK owns command serialization and pacing.
