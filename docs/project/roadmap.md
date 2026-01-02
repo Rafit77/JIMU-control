@@ -45,7 +45,8 @@ Status: complete (2025-12-22)
 [X] array variables
 [ ] some spacial visualisations for array variables
 [ ] make joystick faster
-
+[X] move and eye are put in quee, no wait
+[ ] make quee heuristic
 
 ## Milestone 7 - Extras
 [x] round or square joystick limiter

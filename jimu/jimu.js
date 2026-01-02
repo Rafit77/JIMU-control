@@ -2,6 +2,29 @@ import { EventEmitter } from 'node:events';
 import { JimuBleClient } from './jimu_ble.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const hexKey = (bytes) => Buffer.from(bytes || []).toString('hex');
+
+const maskBytesToIds32 = (bytes) => {
+  const out = [];
+  const b = Array.isArray(bytes) ? bytes : Array.from(bytes || []);
+  for (let bi = 0; bi < Math.min(4, b.length); bi += 1) {
+    const v = Number(b[bi] ?? 0) & 0xff;
+    for (let bit = 0; bit < 8; bit += 1) {
+      if (v & (1 << bit)) out.push(bi * 8 + bit + 1);
+    }
+  }
+  return out;
+};
+
+const maskByteToIds8 = (mask) => {
+  const out = [];
+  const m = Number(mask ?? 0) & 0xff;
+  for (let bit = 0; bit < 8; bit += 1) {
+    if (m & (1 << bit)) out.push(bit + 1);
+  }
+  return out;
+};
 const clampByte = (v) => ((v % 256) + 256) % 256;
 const clampServoDeg = (deg) => Math.max(-120, Math.min(120, Math.round(deg ?? 0)));
 const servoDegToRaw = (deg) => clampByte(clampServoDeg(deg) + 120); // -120..120 => 0..240
@@ -175,6 +198,9 @@ export class Jimu extends EventEmitter {
     this._sendQueueInFlight = false; // a command is currently being sent/awaited
     this._sendQueueCurrentWaitMs = 0; // enqueue->send delay for current command
     this._sendQueueGen = 0; // increment to drop pending queued commands
+    this._sendQueueItemId = 0;
+    this._sendQueueByExact = new Map(); // exactKey -> token
+    this._sendQueueByGroup = new Map(); // groupKey -> token
     this.singleFlight = true;
     this.singleFlightTimeoutMs = 800;
     this._onFrame = this._onFrame.bind(this);
@@ -198,6 +224,8 @@ export class Jimu extends EventEmitter {
     this._sendQueueGen += 1;
     this._sendQueuePending = 0;
     this._sendQueueCurrentWaitMs = 0;
+    this._sendQueueByExact.clear();
+    this._sendQueueByGroup.clear();
     this._emitSendQueueStats();
   }
 
@@ -411,13 +439,106 @@ export class Jimu extends EventEmitter {
   async _send(payload, { blockUntil = null, enqueueOnly = false } = {}) {
     const enqueuedAt = Date.now();
     const gen = this._sendQueueGen;
+
+    const p = Array.isArray(payload) ? payload : Array.from(payload || []);
+    const cmd = p[0];
+
+    const makeDedupe = () => {
+      // Only coalesce actuator commands (don't touch sensor/status requests).
+      if (cmd === 0x09) {
+        const ids = maskBytesToIds32(p.slice(1, 5));
+        return { exactKey: `09:${hexKey(p)}`, groupKeys: ids.map((id) => `servo:${id}`) };
+      }
+      if (cmd === 0x07) {
+        const n = Number(p[1] ?? 0) & 0xff;
+        const ids = p.slice(2, 2 + n).map((x) => Number(x ?? 0) & 0xff).filter((x) => x > 0);
+        return { exactKey: `07:${hexKey(p)}`, groupKeys: ids.map((id) => `servo:${id}`) };
+      }
+      if (cmd === 0x90) {
+        const idOrMask = Number(p[2] ?? 0) & 0xff;
+        const isDual = p.length > 7;
+        const ids = isDual ? maskByteToIds8(idOrMask) : [idOrMask];
+        return { exactKey: `90:${hexKey(p)}`, groupKeys: ids.filter((x) => x > 0).map((id) => `motor:${id}`) };
+      }
+      if (cmd === 0x79) {
+        const sub = Number(p[1] ?? 0) & 0xff;
+        if (sub === 0x06) {
+          const id = Number(p[2] ?? 0) & 0xff;
+          return { exactKey: `79:06:${hexKey(p)}`, groupKeys: id ? [`usled:${id}`] : [] };
+        }
+        if (sub === 0x04) {
+          const eyesMask = Number(p[2] ?? 0) & 0xff;
+          const ids = maskByteToIds8(eyesMask);
+          return { exactKey: `79:04:${hexKey(p)}`, groupKeys: ids.map((id) => `eye:${id}`) };
+        }
+      }
+      if (cmd === 0x78) {
+        const eyesMask = Number(p[2] ?? 0) & 0xff;
+        const ids = maskByteToIds8(eyesMask);
+        return { exactKey: `78:${hexKey(p)}`, groupKeys: ids.map((id) => `eye:${id}`) };
+      }
+      return null;
+    };
+
+    const dedupe = makeDedupe();
+    const exactKey = dedupe?.exactKey || null;
+    const groupKeys = Array.isArray(dedupe?.groupKeys) ? dedupe.groupKeys.filter(Boolean) : [];
+
+    // Heuristic 1: ignore exact duplicates already queued/in-flight.
+    if (exactKey) {
+      const existing = this._sendQueueByExact.get(exactKey);
+      if (existing && !existing.cancelled) return existing.promise || true;
+    }
+
+    // Heuristic 2: coalesce per target (latest wins): cancel older queued commands for same targets.
+    const cancelled = new Set();
+    for (const gk of groupKeys) {
+      const prev = this._sendQueueByGroup.get(gk);
+      if (prev && !prev.cancelled) cancelled.add(prev);
+    }
+    for (const prev of cancelled) {
+      // Only drop commands that haven't started sending yet.
+      if (prev.started) continue;
+      prev.cancelled = true;
+      if (prev.exactKey && this._sendQueueByExact.get(prev.exactKey) === prev) this._sendQueueByExact.delete(prev.exactKey);
+      for (const gk of prev.groupKeys || []) {
+        if (this._sendQueueByGroup.get(gk) === prev) this._sendQueueByGroup.delete(gk);
+      }
+      this._sendQueuePending = Math.max(0, this._sendQueuePending - 1);
+    }
+
     this._sendQueuePending += 1;
     this._emitSendQueueStats();
+
+    const token = {
+      id: (this._sendQueueItemId += 1),
+      started: false,
+      cancelled: false,
+      gen,
+      enqueuedAt,
+      payload: p,
+      blockUntil,
+      enqueueOnly: Boolean(enqueueOnly),
+      exactKey,
+      groupKeys,
+      promise: null,
+    };
     const run = async () => {
+      token.started = true;
       this._sendQueuePending = Math.max(0, this._sendQueuePending - 1);
 
       // If the queue has been flushed since this command was enqueued, drop it.
       if (gen !== this._sendQueueGen) {
+        try {
+          blockUntil?.catch?.(() => {});
+        } catch (_) {
+          // ignore
+        }
+        return true;
+      }
+
+      // If a newer command superseded this one, drop it without sending.
+      if (token.cancelled) {
         try {
           blockUntil?.catch?.(() => {});
         } catch (_) {
@@ -435,20 +556,19 @@ export class Jimu extends EventEmitter {
       this._sendQueueCurrentWaitMs = Math.max(0, Date.now() - enqueuedAt);
       this._emitSendQueueStats();
       try {
-        const cmd = payload?.[0];
-        this.emit('tx', { payload: Buffer.from(payload || []), cmd, meta: { cmd } });
+        this.emit('tx', { payload: Buffer.from(p || []), cmd, meta: { cmd } });
       } catch (_) {
         // ignore logging issues; never block device writes
       }
       try {
-        const res = await this.client.send(payload);
+        const res = await this.client.send(p);
         this._lastSendAt = Date.now();
-        const cmd = payload?.[0];
-        const autoBlock =
-          blockUntil ||
-          (this.singleFlight && typeof cmd === 'number'
-            ? this._waitForFrameCmd(cmd, { timeoutMs: this.singleFlightTimeoutMs }).catch(() => null)
-            : null);
+        const autoBlock = token.enqueueOnly
+          ? null
+          : blockUntil ||
+            (this.singleFlight && typeof cmd === 'number'
+              ? this._waitForFrameCmd(cmd, { timeoutMs: this.singleFlightTimeoutMs }).catch(() => null)
+              : null);
         if (autoBlock) await autoBlock;
         return res;
       } finally {
@@ -463,16 +583,21 @@ export class Jimu extends EventEmitter {
         try {
           await run();
         } catch (e) {
-          const cmd = payload?.[0];
-          this.emit('transportError', { message: e?.message || String(e), ctx: { cmd, payload } });
+          this.emit('transportError', { message: e?.message || String(e), ctx: { cmd, payload: p } });
         }
       };
       this._sendQueue = this._sendQueue.then(runSafe, runSafe);
+      if (exactKey) this._sendQueueByExact.set(exactKey, token);
+      for (const gk of groupKeys) this._sendQueueByGroup.set(gk, token);
       return true;
     }
 
-    this._sendQueue = this._sendQueue.then(run, run);
-    return this._sendQueue;
+    const chained = this._sendQueue.then(run, run);
+    token.promise = chained;
+    this._sendQueue = chained;
+    if (exactKey) this._sendQueueByExact.set(exactKey, token);
+    for (const gk of groupKeys) this._sendQueueByGroup.set(gk, token);
+    return chained;
   }
 
   // ----------------- Public API -----------------
