@@ -772,31 +772,31 @@ export class Jimu extends EventEmitter {
   }
 
   // Eyes
-  async setEyeColor({ eyesMask = 0x01, time = 0xff, r = 0xff, g = 0x00, b = 0x00 } = {}) {
-    await this._send([0x79, 0x04, clampByte(eyesMask), clampByte(time), 0x01, 0xff, clampByte(r), clampByte(g), clampByte(b)]);
+  async setEyeColor({ eyesMask = 0x01, time = 0xff, r = 0xff, g = 0x00, b = 0x00, enqueueOnly = false } = {}) {
+    await this._send([0x79, 0x04, clampByte(eyesMask), clampByte(time), 0x01, 0xff, clampByte(r), clampByte(g), clampByte(b)], { enqueueOnly });
   }
 
   // Ultrasonic LED (experimental)
-  async setUltrasonicLed({ id = 1, r = 0xff, g = 0x00, b = 0x00 } = {}) {
+  async setUltrasonicLed({ id = 1, r = 0xff, g = 0x00, b = 0x00, enqueueOnly = false } = {}) {
     // Per docs/protocol.md:
     //   79 06 <id> <r> <g> <b> <level> 00 ff ff
     // level: 0=off, 1=bright, 2+=dim; we always use 1 and allow "off" by sending 0,0,0.
-    await this._send([0x79, 0x06, clampByte(id), clampByte(r), clampByte(g), clampByte(b), 0x01, 0x00, 0xff, 0xff]);
+    await this._send([0x79, 0x06, clampByte(id), clampByte(r), clampByte(g), clampByte(b), 0x01, 0x00, 0xff, 0xff], { enqueueOnly });
   }
 
-  async setUltrasonicLedOff(id = 1) {
-    await this.setUltrasonicLed({ id, r: 0x00, g: 0x00, b: 0x00 });
+  async setUltrasonicLedOff(id = 1, { enqueueOnly = false } = {}) {
+    await this.setUltrasonicLed({ id, r: 0x00, g: 0x00, b: 0x00, enqueueOnly });
   }
 
-  async setEyeSegments({ eyesMask = 0x01, time = 0xff, entries = [] } = {}) {
+  async setEyeSegments({ eyesMask = 0x01, time = 0xff, entries = [], enqueueOnly = false } = {}) {
     const payload = [0x79, 0x04, clampByte(eyesMask), 0x02, clampByte(entries.length), clampByte(time)];
     entries.forEach(({ r, g, b, mask }) => {
       payload.push(clampByte(r ?? 0), clampByte(g ?? 0), clampByte(b ?? 0), clampByte(mask ?? 0x01));
     });
-    await this._send(payload);
+    await this._send(payload, { enqueueOnly });
   }
 
-  async setEyeAnimation({ eyesMask = 0x01, animationId = 1, repetitions = 1, r = 0xff, g = 0x00, b = 0x00 } = {}) {
+  async setEyeAnimation({ eyesMask = 0x01, animationId = 1, repetitions = 1, r = 0xff, g = 0x00, b = 0x00, enqueueOnly = false } = {}) {
     // Per docs/protocol.md:
     //   78 04 <eyesMask> <animationId> 00 <repetitions> <r> <g> <b>
     await this._send([
@@ -809,7 +809,7 @@ export class Jimu extends EventEmitter {
       clampByte(r),
       clampByte(g),
       clampByte(b),
-    ]);
+    ], { enqueueOnly });
   }
 
   // Change IDs (sensors/motors/eyes/ultrasonic)

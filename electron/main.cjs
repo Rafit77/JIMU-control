@@ -755,10 +755,11 @@ const registerIpc = () => {
       r: Math.max(0, Math.min(255, Math.round(r))),
       g: Math.max(0, Math.min(255, Math.round(g))),
       b: Math.max(0, Math.min(255, Math.round(b))),
+      enqueueOnly: true,
     });
   });
   ipcMain.handle('jimu:setEyeOff', async (_evt, { eyesMask = 0x01 } = {}) => {
-    return jimu.setEyeColor({ eyesMask, time: 0x00, r: 0x00, g: 0x00, b: 0x00 });
+    return jimu.setEyeColor({ eyesMask, time: 0x00, r: 0x00, g: 0x00, b: 0x00, enqueueOnly: true });
   });
   ipcMain.handle('jimu:setEyeSegments', async (_evt, { eyesMask = 0x01, time = 0xff, entries = [] } = {}) => {
     const safeEntries = Array.isArray(entries)
@@ -769,7 +770,7 @@ const registerIpc = () => {
           mask: Math.max(0, Math.min(255, Math.round(e?.mask ?? 1))),
         }))
       : [];
-    return jimu.setEyeSegments({ eyesMask, time, entries: safeEntries });
+    return jimu.setEyeSegments({ eyesMask, time, entries: safeEntries, enqueueOnly: true });
   });
   ipcMain.handle('jimu:setEyeAnimation', async (_evt, { eyesMask = 0x01, animationId = 1, repetitions = 1, r = 0, g = 0, b = 0 } = {}) => {
     return jimu.setEyeAnimation({
@@ -779,6 +780,7 @@ const registerIpc = () => {
       r: Math.max(0, Math.min(255, Math.round(r))),
       g: Math.max(0, Math.min(255, Math.round(g))),
       b: Math.max(0, Math.min(255, Math.round(b))),
+      enqueueOnly: true,
     });
   });
   ipcMain.handle('jimu:setUltrasonicLed', async (_evt, { id = 1, r = 0, g = 0, b = 0 } = {}) => {
@@ -787,10 +789,11 @@ const registerIpc = () => {
       r: Math.max(0, Math.min(255, Math.round(r))),
       g: Math.max(0, Math.min(255, Math.round(g))),
       b: Math.max(0, Math.min(255, Math.round(b))),
+      enqueueOnly: true,
     });
   });
   ipcMain.handle('jimu:setUltrasonicLedOff', async (_evt, { id = 1 } = {}) => {
-    return jimu.setUltrasonicLedOff(id);
+    return jimu.setUltrasonicLedOff(id, { enqueueOnly: true });
   });
   ipcMain.handle('jimu:readServo', async (_evt, id) => jimu.readServoPosition(id));
   ipcMain.handle('jimu:readSensorIR', async (_evt, id) => {
