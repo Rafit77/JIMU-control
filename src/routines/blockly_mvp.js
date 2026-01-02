@@ -1275,6 +1275,16 @@ const defineBlocksOnce = (() => {
       },
     };
 
+    Blockly.Blocks.jimu_math_minus = {
+      init() {
+        this.appendValueInput('VALUE').setCheck('Number').appendField('-');
+        this.setInputsInline(true);
+        this.setOutput(true, 'Number');
+        this.setColour(230);
+        this.setTooltip('Unary minus (negate a number).');
+      },
+    };
+
     Blockly.Blocks.jimu_array_get = {
       init() {
         this.appendDummyInput().appendField('array').appendField(makeArrayNameDropdown(), 'ARR').appendField('at index');
@@ -1286,9 +1296,14 @@ const defineBlocksOnce = (() => {
     };
     Blockly.Blocks.jimu_array_set = {
       init() {
-        this.appendDummyInput().appendField('set array').appendField(makeArrayNameDropdown(), 'ARR').appendField('at index');
-        this.appendValueInput('INDEX').setCheck('Number');
-        this.appendValueInput('VALUE').setCheck('Number').appendField('to');
+        this.appendDummyInput()
+          .appendField('set array')
+          .appendField(makeArrayNameDropdown(), 'ARR')
+          .appendField('at index')
+          .appendField(new Blockly.FieldVariable('i'), 'IDX')
+          .appendField('to');
+        this.appendValueInput('VALUE').setCheck('Number');
+        this.setInputsInline(true);
         this.setPreviousStatement(true);
         this.setNextStatement(true);
         this.setColour(330);
@@ -1297,9 +1312,14 @@ const defineBlocksOnce = (() => {
     };
     Blockly.Blocks.jimu_array_change = {
       init() {
-        this.appendDummyInput().appendField('change array').appendField(makeArrayNameDropdown(), 'ARR').appendField('at index');
-        this.appendValueInput('INDEX').setCheck('Number');
-        this.appendValueInput('DELTA').setCheck('Number').appendField('by');
+        this.appendDummyInput()
+          .appendField('change array')
+          .appendField(makeArrayNameDropdown(), 'ARR')
+          .appendField('at index')
+          .appendField(new Blockly.FieldVariable('i'), 'IDX')
+          .appendField('by');
+        this.appendValueInput('DELTA').setCheck('Number');
+        this.setInputsInline(true);
         this.setPreviousStatement(true);
         this.setNextStatement(true);
         this.setColour(330);
@@ -1354,6 +1374,11 @@ const defineBlocksOnce = (() => {
       const k = JSON.stringify(String(name || ''));
       return `{\n  const __v = api.varGet(${k});\n  api.varSet(${k}, (Number(__v ?? 0) + Number(${delta})));\n}\n`;
     };
+    javascriptGenerator.forBlock.jimu_math_minus = (block) => {
+      const v = javascriptGenerator.valueToCode(block, 'VALUE', javascriptGenerator.UNARY_NEGATION) || '0';
+      const spaced = String(v).startsWith('-') ? ` ${v}` : v;
+      return [`-${spaced}`, javascriptGenerator.UNARY_NEGATION];
+    };
     javascriptGenerator.forBlock.jimu_array_get = (block) => {
       const name = String(block.getFieldValue('ARR') || '');
       const idx = javascriptGenerator.valueToCode(block, 'INDEX', javascriptGenerator.ORDER_NONE) || '0';
@@ -1361,13 +1386,17 @@ const defineBlocksOnce = (() => {
     };
     javascriptGenerator.forBlock.jimu_array_set = (block) => {
       const name = String(block.getFieldValue('ARR') || '');
-      const idx = javascriptGenerator.valueToCode(block, 'INDEX', javascriptGenerator.ORDER_NONE) || '0';
+      const field = block.getField('IDX');
+      const idxName = typeof field?.getText === 'function' ? field.getText() : String(block.getFieldValue('IDX') || '');
+      const idx = idxName ? `Number(api.varGet(${JSON.stringify(String(idxName || ''))}) ?? 0)` : '0';
       const value = javascriptGenerator.valueToCode(block, 'VALUE', javascriptGenerator.ORDER_NONE) || '0';
       return `api.arrSet(${JSON.stringify(name)}, ${idx}, ${value});\n`;
     };
     javascriptGenerator.forBlock.jimu_array_change = (block) => {
       const name = String(block.getFieldValue('ARR') || '');
-      const idx = javascriptGenerator.valueToCode(block, 'INDEX', javascriptGenerator.ORDER_NONE) || '0';
+      const field = block.getField('IDX');
+      const idxName = typeof field?.getText === 'function' ? field.getText() : String(block.getFieldValue('IDX') || '');
+      const idx = idxName ? `Number(api.varGet(${JSON.stringify(String(idxName || ''))}) ?? 0)` : '0';
       const delta = javascriptGenerator.valueToCode(block, 'DELTA', javascriptGenerator.ORDER_NONE) || '0';
       return `api.arrChange(${JSON.stringify(name)}, ${idx}, ${delta});\n`;
     };
@@ -1582,6 +1611,7 @@ export const getBlocklyToolbox = () => {
         categorystyle: 'math_category',
         contents: [
           { kind: 'block', type: 'math_number' },
+          { kind: 'block', type: 'jimu_math_minus', inputs: { VALUE: { shadow: { type: 'math_number', fields: { NUM: 1 } } } } },
           { kind: 'block', type: 'logic_boolean' },
           { kind: 'block', type: 'math_arithmetic' },
           { kind: 'block', type: 'math_single' },
@@ -1705,18 +1735,24 @@ export const createWorkspace = (el, { initialXmlText, routineId } = {}) => {
     // ignore
   }
 
-  // Variables category without the built-in "Create variable" prompt button.
-  // (The app has its own Variables dialog.)
-  workspace.registerToolboxCategoryCallback?.('JIMU_VARIABLES', (ws) => {
-    const blocks = Blockly?.Variables?.flyoutCategoryBlocks ? Blockly.Variables.flyoutCategoryBlocks(ws) : [];
+    // Variables category without the built-in "Create variable" prompt button.
+    // (The app has its own Variables dialog.)
+    workspace.registerToolboxCategoryCallback?.('JIMU_VARIABLES', (ws) => {
+      const blocks = Blockly?.Variables?.flyoutCategoryBlocks ? Blockly.Variables.flyoutCategoryBlocks(ws) : [];
 
-    const addArrayBlock = (type, inputs = {}) => {
-      const b = xmlCreateElement('block');
-      b.setAttribute('type', type);
-      for (const [inputName, shadowDef] of Object.entries(inputs || {})) {
-        const v = xmlCreateElement('value');
-        v.setAttribute('name', inputName);
-        const s = xmlCreateElement('shadow');
+      const addArrayBlock = (type, { inputs = {}, fields = {} } = {}) => {
+        const b = xmlCreateElement('block');
+        b.setAttribute('type', type);
+        for (const [fieldName, fieldValue] of Object.entries(fields || {})) {
+          const f = xmlCreateElement('field');
+          f.setAttribute('name', fieldName);
+          f.textContent = String(fieldValue);
+          b.appendChild(f);
+        }
+        for (const [inputName, shadowDef] of Object.entries(inputs || {})) {
+          const v = xmlCreateElement('value');
+          v.setAttribute('name', inputName);
+          const s = xmlCreateElement('shadow');
         s.setAttribute('type', shadowDef.type);
         for (const [fieldName, fieldValue] of Object.entries(shadowDef.fields || {})) {
           const f = xmlCreateElement('field');
@@ -1730,15 +1766,15 @@ export const createWorkspace = (el, { initialXmlText, routineId } = {}) => {
       blocks.push(b);
     };
 
-    const sep = xmlCreateElement('sep');
-    sep.setAttribute('gap', '8');
-    blocks.push(sep);
-    addArrayBlock('jimu_array_get', { INDEX: { type: 'math_number', fields: { NUM: 0 } } });
-    addArrayBlock('jimu_array_set', { INDEX: { type: 'math_number', fields: { NUM: 0 } }, VALUE: { type: 'math_number', fields: { NUM: 0 } } });
-    addArrayBlock('jimu_array_change', { INDEX: { type: 'math_number', fields: { NUM: 0 } }, DELTA: { type: 'math_number', fields: { NUM: 1 } } });
+      const sep = xmlCreateElement('sep');
+      sep.setAttribute('gap', '8');
+      blocks.push(sep);
+      addArrayBlock('jimu_array_get', { inputs: { INDEX: { type: 'math_number', fields: { NUM: 0 } } } });
+      addArrayBlock('jimu_array_set', { fields: { IDX: 'i' }, inputs: { VALUE: { type: 'math_number', fields: { NUM: 0 } } } });
+      addArrayBlock('jimu_array_change', { fields: { IDX: 'i' }, inputs: { DELTA: { type: 'math_number', fields: { NUM: 1 } } } });
 
-    return blocks;
-  });
+      return blocks;
+    });
 
   if (initialXmlText) {
     try {
