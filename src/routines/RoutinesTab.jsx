@@ -1267,7 +1267,6 @@ const RoutinesTab = forwardRef(function RoutinesTab(
       const degrees = ids.map((id) => byId.get(id));
 
       await ipc.invoke('jimu:setServoPosMulti', { ids, degrees, speed });
-      await wait(ms);
     };
 
     const setServoPositionTimed = async (id, deg, durationMs = 400) => {
@@ -1546,6 +1545,7 @@ const RoutinesTab = forwardRef(function RoutinesTab(
             .map((sid) => ({ id: sid, deg: poseDeg[String(sid)] }))
             .filter((e) => typeof e.deg === 'number' && Number.isFinite(e.deg));
           await setServoPositionsTimed(entries, durationMs);
+          await wait(durationMs);
         }
       } finally {
         actionsRuntimeRef.current.delete(id);

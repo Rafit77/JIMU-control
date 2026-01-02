@@ -147,7 +147,6 @@ export const createRoutineApi = ({
     const degrees = ids.map((id) => byId.get(id));
 
     await ipc.invoke('jimu:setServoPosMulti', { ids, degrees, speed });
-    await wait(ms);
   };
 
   const setServoPositionTimed = async (id, deg, durationMs = 400) => {
@@ -354,22 +353,23 @@ export const createRoutineApi = ({
     }
 
     try {
-      for (const f of frames) {
+        for (const f of frames) {
         if (isCancelled()) {
           run.stopRequested = true;
           return;
         }
         if (run.stopRequested) return;
-        const durationMs = clamp(Number(f?.durationMs ?? 400), ACTION_FRAME_MIN_MS, ACTION_FRAME_MAX_MS);
+          const durationMs = clamp(Number(f?.durationMs ?? 400), ACTION_FRAME_MIN_MS, ACTION_FRAME_MAX_MS);
         const poseDeg = f?.poseDeg && typeof f.poseDeg === 'object' ? f.poseDeg : {};
-        const entries = servoIds
-          .map((sid) => ({ id: sid, deg: poseDeg[String(sid)] }))
-          .filter((e) => typeof e.deg === 'number' && Number.isFinite(e.deg));
-        await setServoPositionsTimed(entries, durationMs);
+          const entries = servoIds
+            .map((sid) => ({ id: sid, deg: poseDeg[String(sid)] }))
+            .filter((e) => typeof e.deg === 'number' && Number.isFinite(e.deg));
+          await setServoPositionsTimed(entries, durationMs);
+          await wait(durationMs);
+        }
+      } finally {
+        rt.running.delete(id);
       }
-    } finally {
-      rt.running.delete(id);
-    }
   };
 
   const selectAction = (actionId) => playAction(actionId);

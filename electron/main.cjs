@@ -815,7 +815,7 @@ const registerIpc = () => {
     winRef.setTitle(formatWindowTitle(windowTitleSuffix));
   });
   ipcMain.handle('jimu:setServoPos', async (_evt, { id, posDeg, speed }) => {
-    return jimu.setServoPositionDeg(id, posDeg ?? 0, { speed: speed ?? 0x14, tail: [0x00, 0x00] });
+    return jimu.setServoPositionDeg(id, posDeg ?? 0, { speed: speed ?? 0x14, tail: [0x00, 0x00], enqueueOnly: true });
   });
   ipcMain.handle('jimu:setServoPosMulti', async (_evt, { ids, degrees, speed }) => {
     return jimu.setServoPositionsDeg({
@@ -823,27 +823,28 @@ const registerIpc = () => {
       degrees: Array.isArray(degrees) ? degrees : [],
       speed: speed ?? 0x14,
       tail: [0x00, 0x00],
+      enqueueOnly: true,
     });
   });
   ipcMain.handle('jimu:rotateServo', async (_evt, { id, dir, speed, maxSpeed = 1000 }) => {
     const lim = Math.max(0, Math.min(maxSpeed, speed ?? 0));
-    return jimu.rotateServo(id, dir, lim);
+    return jimu.rotateServo(id, dir, lim, { enqueueOnly: true });
   });
   ipcMain.handle('jimu:rotateServoMulti', async (_evt, { ids, dir, speed, maxSpeed = 1000 }) => {
     const lim = Math.max(0, Math.min(maxSpeed, speed ?? 0));
     const list = Array.isArray(ids) ? ids : [];
-    return jimu.rotateServos(list, dir, lim);
+    return jimu.rotateServos(list, dir, lim, { enqueueOnly: true });
   });
   ipcMain.handle('jimu:rotateMotor', async (_evt, { id, dir = 'cw', speed = 0, maxSpeed = 150, durationMs = 1000 }) => {
     const lim = Math.max(0, Math.min(maxSpeed, Math.round(speed ?? 0)));
     const signed = dir === 'ccw' ? -lim : lim;
-    return jimu.rotateMotor(id, signed, Math.max(0, Math.min(6000, Math.round(durationMs ?? 1000))));
+    return jimu.rotateMotor(id, signed, Math.max(0, Math.min(6000, Math.round(durationMs ?? 1000))), { enqueueOnly: true });
   });
   ipcMain.handle('jimu:rotateMotorSigned', async (_evt, { id, speed = 0, maxSpeed = 150, durationMs = 1000 }) => {
     const raw = Math.round(Number(speed ?? 0));
     const lim = Math.max(0, Math.min(maxSpeed, Math.abs(raw)));
     const signed = raw < 0 ? -lim : lim;
-    return jimu.rotateMotor(Number(id ?? 0), signed, Math.max(0, Math.min(6000, Math.round(durationMs ?? 1000))));
+    return jimu.rotateMotor(Number(id ?? 0), signed, Math.max(0, Math.min(6000, Math.round(durationMs ?? 1000))), { enqueueOnly: true });
   });
   ipcMain.handle('jimu:stopMotor', async (_evt, id) => jimu.stopMotor(id));
   ipcMain.handle('jimu:emergencyStop', async () => jimu.emergencyStop());

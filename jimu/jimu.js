@@ -400,7 +400,7 @@ export class Jimu extends EventEmitter {
     });
   }
 
-  async _send(payload, { blockUntil = null } = {}) {
+  async _send(payload, { blockUntil = null, enqueueOnly = false } = {}) {
     const enqueuedAt = Date.now();
     this._sendQueuePending += 1;
     this._emitSendQueueStats();
@@ -437,6 +437,20 @@ export class Jimu extends EventEmitter {
         this._emitSendQueueStats();
       }
     };
+
+    if (enqueueOnly) {
+      const runSafe = async () => {
+        try {
+          await run();
+        } catch (e) {
+          const cmd = payload?.[0];
+          this.emit('transportError', { message: e?.message || String(e), ctx: { cmd, payload } });
+        }
+      };
+      this._sendQueue = this._sendQueue.then(runSafe, runSafe);
+      return true;
+    }
+
     this._sendQueue = this._sendQueue.then(run, run);
     return this._sendQueue;
   }
@@ -489,34 +503,34 @@ export class Jimu extends EventEmitter {
   }
 
   // Servos
-  async setServoPositions({ ids = [], positions = [], speed = 0x14, tail = [0x00, 0x00] } = {}) {
+  async setServoPositions({ ids = [], positions = [], speed = 0x14, tail = [0x00, 0x00], enqueueOnly = false } = {}) {
     if (!ids.length) throw new Error('No servo ids provided');
     const select = idsToMaskBytes32(ids);
     const payload = [0x09, ...select, ...positions.slice(0, ids.length), clampByte(speed), ...tail];
-    await this._send(payload);
+    await this._send(payload, { enqueueOnly });
   }
 
-  async setServoPositionDeg(id, deg, { speed = 0x14, tail = [0x00, 0x00] } = {}) {
-    return this.setServoPositions({ ids: [id], positions: [servoDegToRaw(deg)], speed, tail });
+  async setServoPositionDeg(id, deg, { speed = 0x14, tail = [0x00, 0x00], enqueueOnly = false } = {}) {
+    return this.setServoPositions({ ids: [id], positions: [servoDegToRaw(deg)], speed, tail, enqueueOnly });
   }
 
-  async setServoPositionsDeg({ ids = [], degrees = [], speed = 0x14, tail = [0x00, 0x00] } = {}) {
+  async setServoPositionsDeg({ ids = [], degrees = [], speed = 0x14, tail = [0x00, 0x00], enqueueOnly = false } = {}) {
     const positions = degrees.slice(0, ids.length).map(servoDegToRaw);
-    return this.setServoPositions({ ids, positions, speed, tail });
+    return this.setServoPositions({ ids, positions, speed, tail, enqueueOnly });
   }
 
-  async rotateServo(id, direction, velocity) {
-    return this.rotateServos([id], direction, velocity);
+  async rotateServo(id, direction, velocity, { enqueueOnly = false } = {}) {
+    return this.rotateServos([id], direction, velocity, { enqueueOnly });
   }
 
-  async rotateServos(ids, direction, velocity) {
+  async rotateServos(ids, direction, velocity, { enqueueOnly = false } = {}) {
     const list = Array.isArray(ids) ? ids.map((x) => clampByte(x)).filter((x) => x > 0) : [];
     if (!list.length) throw new Error('No servo ids provided');
     if (list.length > 6) throw new Error('rotateServos supports up to 6 ids per command');
     const vel = Math.max(0, Math.min(0xffff, velocity || 0));
     const hi = (vel >> 8) & 0xff;
     const lo = vel & 0xff;
-    await this._send([0x07, clampByte(list.length), ...list, clampByte(direction), hi, lo]);
+    await this._send([0x07, clampByte(list.length), ...list, clampByte(direction), hi, lo], { enqueueOnly });
   }
 
   async readServoPosition(id = 0, { timeoutMs = 1200 } = {}) {
@@ -619,14 +633,14 @@ export class Jimu extends EventEmitter {
   }
 
   // Motors
-  async rotateMotor(id, speed = 0, durationMs = 6000) {
+  async rotateMotor(id, speed = 0, durationMs = 6000, { enqueueOnly = false } = {}) {
     // speed: roughly -150..150 observed; encoded as signed 16-bit, duration capped ~6s (0.1s units)
     const speedBytes = encodeMotorSpeed(speed);
     const timeBytes = encodeMotorDuration(durationMs);
-    await this._send([0x90, 0x01, clampByte(id), speedBytes.hi, speedBytes.lo, timeBytes.hi, timeBytes.lo]);
+    await this._send([0x90, 0x01, clampByte(id), speedBytes.hi, speedBytes.lo, timeBytes.hi, timeBytes.lo], { enqueueOnly });
   }
 
-  async rotateDualMotor(idMask, speed1 = 0, speed2 = 0, durationMs = 6000) {
+  async rotateDualMotor(idMask, speed1 = 0, speed2 = 0, durationMs = 6000, { enqueueOnly = false } = {}) {
     // idMask: bitmask of motor IDs (0x03 => motors 1+2), speeds applied in ascending ID order
     const s1 = encodeMotorSpeed(speed1);
     const s2 = encodeMotorSpeed(speed2);
@@ -643,7 +657,7 @@ export class Jimu extends EventEmitter {
       s2.lo,
       timeBytes.hi,
       timeBytes.lo,
-    ]);
+    ], { enqueueOnly });
   }
 
   async stopMotor(id) {
