@@ -179,28 +179,45 @@ export class Jimu extends EventEmitter {
   }
 
   async connect(target) {
+    // Avoid listener accumulation on reconnect attempts (e.g. when a connect fails mid-way).
+    this.client.removeListener('frame', this._onFrame);
+    this.client.removeListener('frameError', this._onFrameError);
+    this.client.removeListener('disconnect', this._onDisconnect);
     this.client.on('frame', this._onFrame);
     this.client.on('frameError', this._onFrameError);
     this.client.on('disconnect', this._onDisconnect);
-    await this.client.connect(target);
-    this.state.connected = true;
-    await this._boot();
-    this._startMaintenance();
-    return this.getInfo();
+
+    try {
+      await this.client.connect(target);
+      this.state.connected = true;
+      await this._boot();
+      this._startMaintenance();
+      return this.getInfo();
+    } catch (e) {
+      this.state.connected = false;
+      this._stopMaintenance();
+      this.client.removeListener('frame', this._onFrame);
+      this.client.removeListener('frameError', this._onFrameError);
+      this.client.removeListener('disconnect', this._onDisconnect);
+      throw e;
+    }
   }
 
   async disconnect() {
     this._stopMaintenance();
     this.state.connected = false;
-    await this.client.disconnect();
     this.client.removeListener('frame', this._onFrame);
     this.client.removeListener('frameError', this._onFrameError);
     this.client.removeListener('disconnect', this._onDisconnect);
+    await this.client.disconnect();
   }
 
   _onDisconnect() {
     this._stopMaintenance();
     this.state.connected = false;
+    this.client.removeListener('frame', this._onFrame);
+    this.client.removeListener('frameError', this._onFrameError);
+    this.client.removeListener('disconnect', this._onDisconnect);
     this.emit('disconnect');
   }
 
