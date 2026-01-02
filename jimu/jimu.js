@@ -174,6 +174,7 @@ export class Jimu extends EventEmitter {
     this._sendQueuePending = 0; // commands waiting (not including current in-flight)
     this._sendQueueInFlight = false; // a command is currently being sent/awaited
     this._sendQueueCurrentWaitMs = 0; // enqueue->send delay for current command
+    this._sendQueueGen = 0; // increment to drop pending queued commands
     this.singleFlight = true;
     this.singleFlightTimeoutMs = 800;
     this._onFrame = this._onFrame.bind(this);
@@ -191,6 +192,13 @@ export class Jimu extends EventEmitter {
       inFlight: Boolean(this._sendQueueInFlight),
       currentWaitMs: Math.max(0, Number(this._sendQueueCurrentWaitMs) || 0),
     };
+  }
+
+  flushSendQueue() {
+    this._sendQueueGen += 1;
+    this._sendQueuePending = 0;
+    this._sendQueueCurrentWaitMs = 0;
+    this._emitSendQueueStats();
   }
 
   async connect(target) {
@@ -402,10 +410,22 @@ export class Jimu extends EventEmitter {
 
   async _send(payload, { blockUntil = null, enqueueOnly = false } = {}) {
     const enqueuedAt = Date.now();
+    const gen = this._sendQueueGen;
     this._sendQueuePending += 1;
     this._emitSendQueueStats();
     const run = async () => {
       this._sendQueuePending = Math.max(0, this._sendQueuePending - 1);
+
+      // If the queue has been flushed since this command was enqueued, drop it.
+      if (gen !== this._sendQueueGen) {
+        try {
+          blockUntil?.catch?.(() => {});
+        } catch (_) {
+          // ignore
+        }
+        return true;
+      }
+
       this._sendQueueInFlight = true;
       this._sendQueueCurrentWaitMs = 0;
       this._emitSendQueueStats();
@@ -802,6 +822,10 @@ export class Jimu extends EventEmitter {
   }
 
   async emergencyStop({ refresh = false } = {}) {
+    // Drop any queued (not-yet-sent) commands so stop actions run as soon as possible.
+    // Note: we can't interrupt an in-flight command; we only clear pending work.
+    this.flushSendQueue();
+
     const s = refresh ? await this.refreshStatus() : this.state.status08;
     // Best effort: stop motors and rotations, then release servos by reading all positions.
     const motorIds = s?.motors || [];
