@@ -1,6 +1,6 @@
 {
   "name": "jimu-control",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Electron desktop app for UBTECH JIMU robots (Blockly + controller + BLE).",
   "type": "module",
   "main": "electron/main.cjs",

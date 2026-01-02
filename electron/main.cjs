@@ -10,6 +10,15 @@ const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, globalShortcut }
 // Keep explicit env toggles for local debugging.
 const isDev = !app.isPackaged || process.env.VITE_DEV_SERVER === 'true' || process.env.ELECTRON_DEV === 'true';
 
+const APP_TITLE = 'JIMU-control';
+const formatWindowTitle = (suffix) => {
+  const ver = String(app.getVersion?.() || '').trim();
+  const prefix = ver ? `${APP_TITLE} ${ver}` : APP_TITLE;
+  const s = String(suffix || '').trim();
+  return s ? `${prefix} - ${s}` : prefix;
+};
+let windowTitleSuffix = '';
+
 let jimu = null;
 let JimuBleClient = null;
 let winRef = null;
@@ -546,9 +555,16 @@ const createWindow = async () => {
       nodeIntegration: true,
       contextIsolation: false,
     },
-    title: 'JIMU Control',
+    title: formatWindowTitle(),
   });
   winRef = win;
+  windowTitleSuffix = '';
+
+  // Keep our own title (with version); don't let `document.title` overwrite it after load.
+  win.on('page-title-updated', (e) => {
+    e.preventDefault();
+    if (winRef && !winRef.isDestroyed()) winRef.setTitle(formatWindowTitle(windowTitleSuffix));
+  });
 
   if (process.env.JIMU_OPEN_DEVTOOLS === '1') {
     win.webContents.once('did-finish-load', () => {
@@ -791,7 +807,11 @@ const registerIpc = () => {
     }
   });
   ipcMain.handle('ui:setTitle', (_evt, title) => {
-    if (winRef && !winRef.isDestroyed()) winRef.setTitle(title);
+    if (!winRef || winRef.isDestroyed()) return;
+    const raw = String(title || '').trim();
+    const stripped = raw.replace(/^jimu[- ]?control(\s*\d+\.\d+\.\d+)?\s*[-–—:]?\s*/i, '');
+    windowTitleSuffix = String(stripped || '').trim();
+    winRef.setTitle(formatWindowTitle(windowTitleSuffix));
   });
   ipcMain.handle('jimu:setServoPos', async (_evt, { id, posDeg, speed }) => {
     return jimu.setServoPositionDeg(id, posDeg ?? 0, { speed: speed ?? 0x14, tail: [0x00, 0x00] });
