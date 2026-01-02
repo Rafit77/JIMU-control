@@ -45,6 +45,7 @@ Status: complete (2025-12-22)
 [X] array variables
 
 ## Milestone 7 - Extras
+[x] round or square joystick limiter
 - routine code comments (to allow other understand routines), needed for templates
 - templates? - predefined routines for common problems:
   - joystick to: 2-wheller, 4-wheller, 6-wheeler, turning axis 4 wheeler, ...

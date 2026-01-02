@@ -71,6 +71,7 @@ Alternatives:
 ### Joystick widget
 - Use a custom joystick based on **Pointer Events**:
   - returns normalized values `x,y` in `[-1..1]`
+  - limiter shape: `round` (default) or `square` (allow corners, so `x=1` and `y=1` possible)
   - on release/cancel, returns to `{x:0, y:0}`
   - touch-first: `touch-action: none` on the joystick zone
 

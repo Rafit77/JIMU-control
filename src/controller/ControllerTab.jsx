@@ -32,6 +32,16 @@ const overlapNoCompactor = { ...noCompactor, allowOverlap: true };
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
+const applyJoystickLimiter = (xy, limiter) => {
+  const x = clamp(Number(xy?.x ?? 0), -1, 1);
+  const y = clamp(Number(xy?.y ?? 0), -1, 1);
+  if (String(limiter || 'round') !== 'round') return { x, y };
+  const len = Math.hypot(x, y);
+  if (len <= 1e-6 || len <= 1) return { x, y };
+  const s = 1 / len;
+  return { x: x * s, y: y * s };
+};
+
 const newId = () => {
   try {
     if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
@@ -119,13 +129,15 @@ const defaultWidget = (type, widgets) => {
     props:
       type === 'slider'
         ? { orientation: 'h', mode: SLIDER_MODE_ZERO_LEFT, range: 100, step: 1, value: 0, autoCenter: false }
-        : type === 'button'
+      : type === 'button'
           ? { mode: BUTTON_MODE_MOMENTARY, value: false }
-          : type === 'led'
-            ? { shape: 'round', color: '#000000' }
-            : type === 'display'
-              ? { value: 0 }
-              : {},
+          : type === 'joystick'
+            ? { limiter: 'round' }
+            : type === 'led'
+              ? { shape: 'round', color: '#000000' }
+              : type === 'display'
+                ? { value: 0 }
+                : {},
     bindings:
       type === 'button'
         ? { onPress: '', onRelease: '', onReleaseAction: '', key: '', gamepad: { index: 0, button: -1 } }
@@ -424,6 +436,20 @@ const WidgetConfig = ({ open, widget, routines, actions, onClose, onChange, onDe
               style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }}
             />
           </label>
+
+          {widget.type === 'joystick' ? (
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              Limiter
+              <select
+                value={String(widget.props?.limiter || 'round') === 'square' ? 'square' : 'round'}
+                onChange={(e) => setField(['props', 'limiter'], e.target.value === 'square' ? 'square' : 'round')}
+                style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }}
+              >
+                <option value="round">Round (circle)</option>
+                <option value="square">Square (corners)</option>
+              </select>
+            </label>
+          ) : null}
 
           {widget.type === 'button' ? (
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -1047,7 +1073,7 @@ const DisplayWidget = ({ name, value }) => (
   </div>
 );
 
-const JoystickWidget = ({ name, onChange, runMode }) => {
+const JoystickWidget = ({ name, onChange, runMode, limiter }) => {
   const zoneRef = useRef(null);
   const [knob, setKnob] = useState({ x: 0, y: 0 }); // px offset from center
 
@@ -1062,17 +1088,28 @@ const JoystickWidget = ({ name, onChange, runMode }) => {
       const cy = r.top + r.height / 2;
       const dx = clientX - cx;
       const dy = clientY - cy;
-      const maxR = Math.max(1, Math.min(r.width, r.height) / 2 - knobSize / 2 - 4);
-      const len = Math.hypot(dx, dy);
-      const scale = len > maxR ? maxR / len : 1;
-      const px = dx * scale;
-      const py = dy * scale;
+      const maxX = Math.max(1, r.width / 2 - knobSize / 2 - 4);
+      const maxY = Math.max(1, r.height / 2 - knobSize / 2 - 4);
+      const nextLimiter = String(limiter || 'round') === 'square' ? 'square' : 'round';
+      const maxR = Math.max(1, Math.min(maxX, maxY));
+
+      let px = 0;
+      let py = 0;
+      if (nextLimiter === 'square') {
+        px = clamp(dx, -maxX, maxX);
+        py = clamp(dy, -maxY, maxY);
+      } else {
+        const len = Math.hypot(dx, dy);
+        const scale = len > maxR ? maxR / len : 1;
+        px = dx * scale;
+        py = dy * scale;
+      }
       setKnob({ x: px, y: py });
-      const x = clamp(px / maxR, -1, 1);
-      const y = clamp(py / maxR, -1, 1); // gamepad-like: down = +1, up = -1
-      onChange?.({ x, y });
+      const x = clamp(px / (nextLimiter === 'square' ? maxX : maxR), -1, 1);
+      const y = clamp(py / (nextLimiter === 'square' ? maxY : maxR), -1, 1); // gamepad-like: down = +1, up = -1
+      onChange?.(applyJoystickLimiter({ x, y }, nextLimiter));
     },
-    [knobSize, onChange],
+    [knobSize, limiter, onChange],
   );
 
   const reset = useCallback(() => {
@@ -1135,7 +1172,7 @@ const JoystickWidget = ({ name, onChange, runMode }) => {
             style={{
               width: '70%',
               height: '70%',
-              borderRadius: 999,
+              borderRadius: String(limiter || 'round') === 'square' ? 16 : 999,
               border: '2px solid rgba(11,61,145,0.25)',
               background: 'radial-gradient(circle, rgba(11,61,145,0.10) 0%, rgba(11,61,145,0.03) 60%, transparent 70%)',
             }}
@@ -1872,15 +1909,18 @@ const ControllerTab = forwardRef(function ControllerTab(
           const ay = Number(w.bindings?.gamepad?.axisY ?? -1);
           if (ax < 0 && ay < 0) continue;
           const pad = pads[idx];
-          const x = ax >= 0 ? clamp(Number(pad?.axes?.[ax] ?? 0), -1, 1) : 0;
-          const y = ay >= 0 ? clamp(Number(pad?.axes?.[ay] ?? 0), -1, 1) : 0;
+          const raw = {
+            x: ax >= 0 ? clamp(Number(pad?.axes?.[ax] ?? 0), -1, 1) : 0,
+            y: ay >= 0 ? clamp(Number(pad?.axes?.[ay] ?? 0), -1, 1) : 0,
+          };
+          const xy = applyJoystickLimiter(raw, w.props?.limiter);
           const prev = prevJoyRef.current.get(w.id) || { x: 0, y: 0 };
-          const changed = Math.abs(x - prev.x) > 0.01 || Math.abs(y - prev.y) > 0.01;
+          const changed = Math.abs(xy.x - prev.x) > 0.01 || Math.abs(xy.y - prev.y) > 0.01;
           if (changed) {
-            controllerState.joystickSet(w.name, { x, y });
+            controllerState.joystickSet(w.name, xy);
             const rid = String(w.bindings?.onChange || '');
             if (rid) startRoutine(rid).catch(() => {});
-            prevJoyRef.current.set(w.id, { x, y });
+            prevJoyRef.current.set(w.id, xy);
           }
         }
 
@@ -2282,6 +2322,7 @@ const ControllerTab = forwardRef(function ControllerTab(
                     <JoystickWidget
                       name={w.name}
                       runMode={runMode}
+                      limiter={w.props?.limiter}
                       onChange={(xy) => {
                         controllerState.joystickSet(w.name, xy);
                         const rid = String(w.bindings?.onChange || '');
