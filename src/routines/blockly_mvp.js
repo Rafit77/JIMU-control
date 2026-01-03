@@ -262,7 +262,13 @@ const defineBlocksOnce = (() => {
     ]);
 
     const makeIdDropdown = (kind) => new Blockly.FieldDropdown(() => getIdOptions(kind));
-    const makeControllerDropdown = (kind) => new Blockly.FieldDropdown(() => getControllerWidgetOptions(kind));
+    const makeControllerDropdown = (kind) =>
+      new Blockly.FieldDropdown(function () {
+        const includeName = typeof this.getValue === 'function' ? String(this.getValue() || '') : '';
+        const opts = getControllerWidgetOptions(kind);
+        if (includeName && !opts.some((o) => o?.[1] === includeName)) return [[`(missing: ${includeName})`, includeName], ...opts];
+        return opts;
+      });
     const makeRoutineDropdown = () =>
       new Blockly.FieldDropdown(function () {
         const block = typeof this.getSourceBlock === 'function' ? this.getSourceBlock() : null;

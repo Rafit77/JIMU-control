@@ -25,6 +25,7 @@ const TIMER_MIN_MS = 100;
 const TIMER_STEP_MS = 100;
 const TIMER_FLASH_MS = 50;
 const SLIDER_KEY_REPEAT_MS = 250;
+const JOYSTICK_IDLE_TRIGGER_MS = 1000;
 const BUTTON_MODE_MOMENTARY = 'momentary';
 const BUTTON_MODE_TOGGLE = 'toggle';
 const SLIDER_MODE_CENTER = 'center';
@@ -91,7 +92,7 @@ const defaultWidget = (type, widgets) => {
   // - button: 2x1
   // - slider: 5x1 (horizontal) / 1x5 (vertical)
   // - led: 2x2
-  // - display: 4x3
+  // - display: 4x2
   // - joystick: 4x4 (square)
   // - timer: 1x1
   const w =
@@ -118,7 +119,7 @@ const defaultWidget = (type, widgets) => {
           : type === 'led'
             ? 2
             : type === 'display'
-              ? 3
+              ? 2
               : type === 'timer'
                 ? 1
                 : 2;
@@ -1077,8 +1078,16 @@ const DisplayWidget = ({ name, value }) => (
 const JoystickWidget = ({ name, onChange, runMode, limiter }) => {
   const zoneRef = useRef(null);
   const [knob, setKnob] = useState({ x: 0, y: 0 }); // px offset from center
+  const activePointerIdRef = useRef(null);
+  const valueRef = useRef({ x: 0, y: 0 }); // normalized [-1..1], source of truth for live reads
 
   const knobSize = GRID_PX; // requested 32x32 active part
+
+  useEffect(() => {
+    const k = String(name ?? '').trim();
+    if (!k) return undefined;
+    return controllerState.joystickRegisterProvider(k, () => (runMode ? valueRef.current : { x: 0, y: 0 }));
+  }, [name, runMode]);
 
   const setFromClientXY = useCallback(
     (clientX, clientY) => {
@@ -1108,15 +1117,58 @@ const JoystickWidget = ({ name, onChange, runMode, limiter }) => {
       setKnob({ x: px, y: py });
       const x = clamp(px / (nextLimiter === 'square' ? maxX : maxR), -1, 1);
       const y = clamp(py / (nextLimiter === 'square' ? maxY : maxR), -1, 1); // gamepad-like: down = +1, up = -1
-      onChange?.(applyJoystickLimiter({ x, y }, nextLimiter));
+      const out = applyJoystickLimiter({ x, y }, nextLimiter);
+      valueRef.current = out;
+      onChange?.(out);
     },
-    [knobSize, limiter, onChange],
+    [knobSize, limiter, name, onChange],
   );
 
   const reset = useCallback(() => {
     setKnob({ x: 0, y: 0 });
+    valueRef.current = { x: 0, y: 0 };
     onChange?.({ x: 0, y: 0 });
-  }, [onChange]);
+  }, [name, onChange]);
+
+  const endDrag = useCallback(
+    (force = false) => {
+      if (!runMode) return;
+      if (!force && activePointerIdRef.current == null) return;
+      activePointerIdRef.current = null;
+      reset();
+    },
+    [reset, runMode],
+  );
+
+  useEffect(() => {
+    if (!runMode) {
+      activePointerIdRef.current = null;
+      return;
+    }
+
+    const onUp = (e) => {
+      if (activePointerIdRef.current == null) return;
+      if (Number(e?.pointerId) !== Number(activePointerIdRef.current)) return;
+      endDrag(true);
+    };
+
+    const onCancel = (e) => {
+      if (activePointerIdRef.current == null) return;
+      if (Number(e?.pointerId) !== Number(activePointerIdRef.current)) return;
+      endDrag(true);
+    };
+
+    const onBlur = () => endDrag(true);
+
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, [runMode, endDrag]);
 
   return (
     <div style={{ height: '100%', width: '100%', position: 'relative' }}>
@@ -1134,6 +1186,7 @@ const JoystickWidget = ({ name, onChange, runMode, limiter }) => {
         }}
         onPointerDown={(e) => {
           if (!runMode) return;
+          activePointerIdRef.current = e.pointerId;
           try {
             e.currentTarget.setPointerCapture?.(e.pointerId);
           } catch (_) {
@@ -1143,21 +1196,12 @@ const JoystickWidget = ({ name, onChange, runMode, limiter }) => {
         }}
         onPointerMove={(e) => {
           if (!runMode) return;
-          if (!(e.buttons & 1)) return;
+          if (Number(e.pointerId) !== Number(activePointerIdRef.current)) return;
           setFromClientXY(e.clientX, e.clientY);
         }}
-        onPointerUp={() => {
-          if (!runMode) return;
-          reset();
-        }}
-        onPointerCancel={() => {
-          if (!runMode) return;
-          reset();
-        }}
-        onLostPointerCapture={() => {
-          if (!runMode) return;
-          reset();
-        }}
+        onPointerUp={() => endDrag(true)}
+        onPointerCancel={() => endDrag(true)}
+        onLostPointerCapture={() => endDrag(true)}
       >
         <div
           style={{
@@ -1229,8 +1273,10 @@ const ControllerTab = forwardRef(function ControllerTab(
   const lastStartRef = useRef(new Map()); // routineId -> ts
   const actionsRuntimeRef = useRef({ running: new Map() }); // actionId -> { stopRequested }
   const widgetsRef = useRef(widgets);
+  const runModeRef = useRef(runMode);
   const prevButtonsRef = useRef(new Map()); // widgetId -> bool
   const prevJoyRef = useRef(new Map()); // widgetId -> {x,y}
+  const joystickIdleLastAtRef = useRef(new Map()); // widgetId -> ts (last input event / last forced trigger)
   const buttonSourcesRef = useRef(new Map()); // widgetId -> { mouse, key, pad }
   const buttonEffectiveRef = useRef(new Map()); // widgetId -> bool (momentary effective pressed)
   const sliderKeyRef = useRef(new Map()); // widgetId -> { up: bool, down: bool, timer: any }
@@ -1247,6 +1293,15 @@ const ControllerTab = forwardRef(function ControllerTab(
   useEffect(() => {
     widgetsRef.current = widgets;
   }, [widgets]);
+
+  useEffect(() => {
+    runModeRef.current = runMode;
+  }, [runMode]);
+
+  useEffect(() => {
+    if (runMode) return;
+    joystickIdleLastAtRef.current.clear();
+  }, [runMode]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -1365,10 +1420,16 @@ const ControllerTab = forwardRef(function ControllerTab(
   }, [ipc, projectId, routines, routineXmlRamCacheRef]);
 
   const startRoutine = useCallback(
-    async (routineId) => {
+    async (routineId, { restartIfRunning = false } = {}) => {
       const rid = String(routineId || '');
       if (!rid) return;
-      if (runningRef.current.has(rid)) return;
+
+      const prevRun = runningRef.current.get(rid);
+      if (prevRun) {
+        // Routines are non-reentrant: if already running, ignore the new trigger.
+        // This prevents "stop" outputs from being skipped due to cancellation.
+        return;
+      }
       const now = Date.now();
       const last = Number(lastStartRef.current.get(rid) || 0);
       if (now - last < ROUTINE_RETRIGGER_COOLDOWN_MS) return;
@@ -1376,7 +1437,8 @@ const ControllerTab = forwardRef(function ControllerTab(
 
       if (!ipc || !projectId) return;
       const cancelRef = { current: { isCancelled: false, onCancel: null } };
-      runningRef.current.set(rid, { cancelRef });
+      const runKey = newId();
+      runningRef.current.set(rid, { cancelRef, runKey });
 
       try {
         let xml = '';
@@ -1466,7 +1528,8 @@ const ControllerTab = forwardRef(function ControllerTab(
       } catch (e) {
         addLog?.(`[Controller] Routine error: ${e?.message || String(e)}`);
       } finally {
-        runningRef.current.delete(rid);
+        const cur = runningRef.current.get(rid);
+        if (cur?.runKey === runKey) runningRef.current.delete(rid);
       }
     },
     [ipc, projectId, calibration, projectModules, actions, battery, addLog, routineXmlRamCacheRef, actionJsonRamCacheRef],
@@ -1510,6 +1573,35 @@ const ControllerTab = forwardRef(function ControllerTab(
     bumpTimerFlash((v) => v + 1);
     setTimeout(() => bumpTimerFlash((v) => v + 1), TIMER_FLASH_MS + 20);
   }, []);
+
+  const noteJoystickActivity = useCallback((widgetId) => {
+    if (!runModeRef.current) return;
+    const id = String(widgetId ?? '');
+    if (!id) return;
+    joystickIdleLastAtRef.current.set(id, Date.now());
+  }, []);
+
+  // Joysticks should keep triggering their bound routine even when their value is not changing
+  // (including when centered), so that controller mode can continuously apply "stop" outputs.
+  useEffect(() => {
+    if (!runMode) return;
+    const t = setInterval(() => {
+      if (!runModeRef.current) return;
+      const now = Date.now();
+      const ws = widgetsRef.current || [];
+      for (const w of ws) {
+        if (w?.type !== 'joystick') continue;
+        const rid = String(w.bindings?.onChange || '');
+        if (!rid) continue;
+        const wid = String(w.id);
+        const last = Number(joystickIdleLastAtRef.current.get(wid) || 0);
+        if (last && now - last < JOYSTICK_IDLE_TRIGGER_MS) continue;
+        startRoutine(rid, { restartIfRunning: true }).catch(() => {});
+        joystickIdleLastAtRef.current.set(wid, now);
+      }
+    }, 100);
+    return () => clearInterval(t);
+  }, [runMode, startRoutine]);
 
   useEffect(() => {
     const namesByKind = {
@@ -1730,6 +1822,7 @@ const ControllerTab = forwardRef(function ControllerTab(
     buttonEffectiveRef.current.clear();
     prevButtonsRef.current.clear();
     prevJoyRef.current.clear();
+    joystickIdleLastAtRef.current.clear();
     sliderKeyRef.current.forEach((s) => {
       try {
         if (s?.timer) clearInterval(s.timer);
@@ -1931,8 +2024,9 @@ const ControllerTab = forwardRef(function ControllerTab(
           const changed = Math.abs(xy.x - prev.x) > 0.01 || Math.abs(xy.y - prev.y) > 0.01;
           if (changed) {
             controllerState.joystickSet(w.name, xy);
+            noteJoystickActivity(w.id);
             const rid = String(w.bindings?.onChange || '');
-            if (rid) startRoutine(rid).catch(() => {});
+            if (rid) startRoutine(rid, { restartIfRunning: true }).catch(() => {});
             prevJoyRef.current.set(w.id, xy);
           }
         }
@@ -1971,7 +2065,7 @@ const ControllerTab = forwardRef(function ControllerTab(
 
     const t = setInterval(tick, 50);
     return () => clearInterval(t);
-  }, [runMode, startRoutine, playActionFromTrigger, setButtonUiValue, setMomentaryButtonSource]);
+  }, [runMode, startRoutine, playActionFromTrigger, setButtonUiValue, setMomentaryButtonSource, noteJoystickActivity]);
 
   // Live store subscription to re-render LEDs/displays
   const [, bump] = useState(0);
@@ -2003,7 +2097,25 @@ const ControllerTab = forwardRef(function ControllerTab(
             {status === 'Connected' ? 'Connected' : 'Disconnected'}
           </strong>
         </span>
-        <button onClick={() => setRunMode((p) => !p)}>{runMode ? 'Design' : 'Run'}</button>
+        <button
+          onClick={() =>
+            setRunMode((p) => {
+              const next = !p;
+              runModeRef.current = next;
+              if (!next) {
+                joystickIdleLastAtRef.current.clear();
+                const ws = widgetsRef.current || [];
+                for (const w of ws) {
+                  if (w?.type !== 'joystick') continue;
+                  controllerState.joystickSet(w.name, { x: 0, y: 0 });
+                }
+              }
+              return next;
+            })
+          }
+        >
+          {runMode ? 'Design' : 'Run'}
+        </button>
         {runMode ? (
           <span style={{ color: '#555', fontSize: 12 }}>
             JIMU queue: <strong>{sendQueueStats.pending}</strong>, wait:{' '}
@@ -2351,16 +2463,17 @@ const ControllerTab = forwardRef(function ControllerTab(
                   }}
                 >
                   <div style={{ height: '100%', width: '100%', pointerEvents: runMode ? 'auto' : 'none' }}>
-                    <JoystickWidget
-                      name={w.name}
-                      runMode={runMode}
-                      limiter={w.props?.limiter}
-                      onChange={(xy) => {
-                        controllerState.joystickSet(w.name, xy);
-                        const rid = String(w.bindings?.onChange || '');
-                        if (rid) startRoutine(rid).catch(() => {});
-                      }}
-                    />
+                      <JoystickWidget
+                        name={w.name}
+                        runMode={runMode}
+                        limiter={w.props?.limiter}
+                        onChange={(xy) => {
+                          controllerState.joystickSet(w.name, xy);
+                          noteJoystickActivity(w.id);
+                          const rid = String(w.bindings?.onChange || '');
+                          if (rid) startRoutine(rid, { restartIfRunning: true }).catch(() => {});
+                        }}
+                      />
                   </div>
                 </div>
               );

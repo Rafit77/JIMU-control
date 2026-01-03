@@ -44,9 +44,10 @@ Status: complete (2025-12-22)
 [X] logs in project, rotate 10 last
 [X] array variables
 [ ] some spacial visualisations for array variables
-[ ] make joystick faster
+[ ] make joystick faster, and not "hanging"
 [X] move and eye are put in quee, no wait
 [X] make quee heuristic
+[ ] somtimes JIMU search need to be repeated many times
 
 ## Milestone 7 - Extras
 [x] round or square joystick limiter

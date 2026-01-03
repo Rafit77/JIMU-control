@@ -6,6 +6,10 @@ const store = {
   displays: new Map(), // name -> any
 };
 
+// Optional live providers allow reading widget state without relying on the last emitted event.
+// name -> () => {x,y}
+const joystickProviders = new Map();
+
 const listeners = new Set(); // (event) => void
 
 const emit = (event) => {
@@ -47,7 +51,30 @@ export const switchSet = (name, value) => {
   emit({ type: 'switch', name: k, value: store.switches.get(k) });
 };
 
-export const joystickGet = (name) => store.joysticks.get(String(name ?? '')) || { x: 0, y: 0 };
+export const joystickRegisterProvider = (name, provider) => {
+  const k = String(name ?? '');
+  if (!k || typeof provider !== 'function') return () => {};
+  joystickProviders.set(k, provider);
+  emit({ type: 'joystickProvider', name: k });
+  return () => {
+    if (joystickProviders.get(k) === provider) joystickProviders.delete(k);
+    emit({ type: 'joystickProvider', name: k });
+  };
+};
+
+export const joystickGet = (name) => {
+  const k = String(name ?? '');
+  const provider = joystickProviders.get(k);
+  if (provider) {
+    try {
+      const v = provider();
+      return { x: Number(v?.x ?? 0), y: Number(v?.y ?? 0) };
+    } catch (_) {
+      // ignore
+    }
+  }
+  return store.joysticks.get(k) || { x: 0, y: 0 };
+};
 export const joystickGetAxis = (name, axis) => {
   const j = joystickGet(name);
   return axis === 'y' ? Number(j?.y ?? 0) : Number(j?.x ?? 0);
@@ -72,4 +99,3 @@ export const displaySet = (name, value) => {
   store.displays.set(k, value);
   emit({ type: 'display', name: k, value });
 };
-

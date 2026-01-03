@@ -575,6 +575,13 @@ export class Jimu extends EventEmitter {
         this._sendQueueInFlight = false;
         this._sendQueueCurrentWaitMs = 0;
         this._emitSendQueueStats();
+
+        // Cleanup dedupe maps after the command has been processed.
+        // Keeping entries forever would suppress future identical commands (e.g., repeated "speed 0" stops).
+        if (token.exactKey && this._sendQueueByExact.get(token.exactKey) === token) this._sendQueueByExact.delete(token.exactKey);
+        for (const gk of token.groupKeys || []) {
+          if (this._sendQueueByGroup.get(gk) === token) this._sendQueueByGroup.delete(gk);
+        }
       }
     };
 
