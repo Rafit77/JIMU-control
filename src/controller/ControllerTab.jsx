@@ -1075,7 +1075,7 @@ const DisplayWidget = ({ name, value }) => (
   </div>
 );
 
-const JoystickWidget = ({ name, onChange, runMode, limiter }) => {
+const JoystickWidget = ({ name, onChange, runMode, limiter, value }) => {
   const zoneRef = useRef(null);
   const [knob, setKnob] = useState({ x: 0, y: 0 }); // px offset from center
   const activePointerIdRef = useRef(null);
@@ -1086,8 +1086,29 @@ const JoystickWidget = ({ name, onChange, runMode, limiter }) => {
   useEffect(() => {
     const k = String(name ?? '').trim();
     if (!k) return undefined;
-    return controllerState.joystickRegisterProvider(k, () => (runMode ? valueRef.current : { x: 0, y: 0 }));
+    return controllerState.joystickRegisterProvider(k, () => ({
+      force: runMode && activePointerIdRef.current != null,
+      value: runMode ? valueRef.current : { x: 0, y: 0 },
+    }));
   }, [name, runMode]);
+
+  useEffect(() => {
+    if (!runMode) return;
+    if (activePointerIdRef.current != null) return; // don't fight active drag
+    const el = zoneRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const maxX = Math.max(1, r.width / 2 - knobSize / 2 - 4);
+    const maxY = Math.max(1, r.height / 2 - knobSize / 2 - 4);
+    const nextLimiter = String(limiter || 'round') === 'square' ? 'square' : 'round';
+    const maxR = Math.max(1, Math.min(maxX, maxY));
+    const raw = { x: clamp(Number(value?.x ?? 0), -1, 1), y: clamp(Number(value?.y ?? 0), -1, 1) };
+    const out = applyJoystickLimiter(raw, nextLimiter);
+    valueRef.current = out;
+    const px = out.x * (nextLimiter === 'square' ? maxX : maxR);
+    const py = out.y * (nextLimiter === 'square' ? maxY : maxR);
+    setKnob({ x: px, y: py });
+  }, [runMode, knobSize, limiter, value?.x, value?.y]);
 
   const setFromClientXY = useCallback(
     (clientX, clientY) => {
@@ -1420,25 +1441,31 @@ const ControllerTab = forwardRef(function ControllerTab(
   }, [ipc, projectId, routines, routineXmlRamCacheRef]);
 
   const startRoutine = useCallback(
-    async (routineId, { restartIfRunning = false } = {}) => {
+    async (routineId, { restartIfRunning = false, bypassCooldown = false } = {}) => {
       const rid = String(routineId || '');
       if (!rid) return;
 
       const prevRun = runningRef.current.get(rid);
       if (prevRun) {
-        // Routines are non-reentrant: if already running, ignore the new trigger.
-        // This prevents "stop" outputs from being skipped due to cancellation.
+        // Routines are non-reentrant: if already running, ignore the new trigger by default.
+        // For controller/gamepad continuous control, allow one coalesced re-run request after the current run finishes.
+        if (!restartIfRunning) return;
+        try {
+          prevRun.restartRequested = true;
+        } catch (_) {
+          // ignore
+        }
         return;
       }
       const now = Date.now();
       const last = Number(lastStartRef.current.get(rid) || 0);
-      if (now - last < ROUTINE_RETRIGGER_COOLDOWN_MS) return;
+      if (!bypassCooldown && now - last < ROUTINE_RETRIGGER_COOLDOWN_MS) return;
       lastStartRef.current.set(rid, now);
 
       if (!ipc || !projectId) return;
       const cancelRef = { current: { isCancelled: false, onCancel: null } };
       const runKey = newId();
-      runningRef.current.set(rid, { cancelRef, runKey });
+      runningRef.current.set(rid, { cancelRef, runKey, restartRequested: false });
 
       try {
         let xml = '';
@@ -1529,7 +1556,9 @@ const ControllerTab = forwardRef(function ControllerTab(
         addLog?.(`[Controller] Routine error: ${e?.message || String(e)}`);
       } finally {
         const cur = runningRef.current.get(rid);
+        const shouldRestart = Boolean(cur?.runKey === runKey && cur?.restartRequested);
         if (cur?.runKey === runKey) runningRef.current.delete(rid);
+        if (shouldRestart) startRoutine(rid, { restartIfRunning: false, bypassCooldown: true }).catch(() => {});
       }
     },
     [ipc, projectId, calibration, projectModules, actions, battery, addLog, routineXmlRamCacheRef, actionJsonRamCacheRef],
@@ -2450,6 +2479,7 @@ const ControllerTab = forwardRef(function ControllerTab(
             }
 
             if (w.type === 'joystick') {
+              const joy = controllerState.joystickGet(w.name);
               return (
                 <div
                   key={w.id}
@@ -2467,6 +2497,7 @@ const ControllerTab = forwardRef(function ControllerTab(
                         name={w.name}
                         runMode={runMode}
                         limiter={w.props?.limiter}
+                        value={joy}
                         onChange={(xy) => {
                           controllerState.joystickSet(w.name, xy);
                           noteJoystickActivity(w.id);

@@ -68,7 +68,10 @@ export const joystickGet = (name) => {
   if (provider) {
     try {
       const v = provider();
-      return { x: Number(v?.x ?? 0), y: Number(v?.y ?? 0) };
+      // Provider can either return {x,y} or { force: boolean, value: {x,y} }.
+      const force = Boolean(v && typeof v === 'object' && 'force' in v ? v.force : true);
+      const raw = v && typeof v === 'object' && 'value' in v ? v.value : v;
+      if (force) return { x: Number(raw?.x ?? 0), y: Number(raw?.y ?? 0) };
     } catch (_) {
       // ignore
     }

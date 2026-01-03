@@ -484,10 +484,24 @@ export class Jimu extends EventEmitter {
     const exactKey = dedupe?.exactKey || null;
     const groupKeys = Array.isArray(dedupe?.groupKeys) ? dedupe.groupKeys.filter(Boolean) : [];
 
+    const cleanupDedupe = (token) => {
+      if (!token) return;
+      if (token.exactKey && this._sendQueueByExact.get(token.exactKey) === token) this._sendQueueByExact.delete(token.exactKey);
+      for (const gk of token.groupKeys || []) {
+        if (this._sendQueueByGroup.get(gk) === token) this._sendQueueByGroup.delete(gk);
+      }
+    };
+
     // Heuristic 1: ignore exact duplicates already queued/in-flight.
     if (exactKey) {
       const existing = this._sendQueueByExact.get(exactKey);
-      if (existing && !existing.cancelled) return existing.promise || true;
+      // Only treat it as a duplicate if it's for the current queue generation and hasn't been cancelled.
+      // Never keep historical "already sent" commands in the dedupe maps.
+      if (existing && (existing.gen !== this._sendQueueGen || existing.cancelled)) {
+        cleanupDedupe(existing);
+      } else if (existing) {
+        return existing.promise || true;
+      }
     }
 
     // Heuristic 2: coalesce per target (latest wins): cancel older queued commands for same targets.
@@ -534,6 +548,7 @@ export class Jimu extends EventEmitter {
         } catch (_) {
           // ignore
         }
+        cleanupDedupe(token);
         return true;
       }
 
@@ -544,6 +559,7 @@ export class Jimu extends EventEmitter {
         } catch (_) {
           // ignore
         }
+        cleanupDedupe(token);
         return true;
       }
 
@@ -575,13 +591,7 @@ export class Jimu extends EventEmitter {
         this._sendQueueInFlight = false;
         this._sendQueueCurrentWaitMs = 0;
         this._emitSendQueueStats();
-
-        // Cleanup dedupe maps after the command has been processed.
-        // Keeping entries forever would suppress future identical commands (e.g., repeated "speed 0" stops).
-        if (token.exactKey && this._sendQueueByExact.get(token.exactKey) === token) this._sendQueueByExact.delete(token.exactKey);
-        for (const gk of token.groupKeys || []) {
-          if (this._sendQueueByGroup.get(gk) === token) this._sendQueueByGroup.delete(gk);
-        }
+        cleanupDedupe(token);
       }
     };
 
