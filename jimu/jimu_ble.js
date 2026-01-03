@@ -104,35 +104,96 @@ export class JimuBleClient extends EventEmitter {
     });
   }
 
-  static async scan({ timeoutMs = 5000, nameSubstring = TARGET_NAME_SUBSTR } = {}) {
-    const matches = new Map();
+  static _scanLock = Promise.resolve();
 
-    const discoverHandler = (p) => {
-      const name = p.advertisement?.localName || '';
-      if (!name || !name.toLowerCase().includes(nameSubstring.toLowerCase())) return;
-      matches.set(p.id, { id: p.id, name, peripheral: p });
-    };
-
-    noble.on('discover', discoverHandler);
-    if (noble.state === 'poweredOn') {
-      await noble.startScanningAsync([], false);
-    } else {
-      await new Promise((resolve) => {
-        const handler = async (state) => {
-          if (state === 'poweredOn') {
-            noble.removeListener('stateChange', handler);
-            await noble.startScanningAsync([], false);
-            resolve();
-          }
-        };
-        noble.on('stateChange', handler);
-      });
+  static async _withScanLock(fn) {
+    const prev = JimuBleClient._scanLock;
+    let release = null;
+    JimuBleClient._scanLock = new Promise((resolve) => {
+      release = resolve;
+    });
+    await prev;
+    try {
+      return await fn();
+    } finally {
+      try {
+        release?.();
+      } catch (_) {
+        // ignore
+      }
     }
+  }
 
-    await sleep(timeoutMs);
-    noble.removeListener('discover', discoverHandler);
-    await noble.stopScanningAsync();
-    return Array.from(matches.values());
+  static async scan({ timeoutMs = 5000, nameSubstring = TARGET_NAME_SUBSTR } = {}) {
+    return JimuBleClient._withScanLock(async () => {
+      const matches = new Map();
+
+      const discoverHandler = (p) => {
+        const name = p.advertisement?.localName || '';
+        if (!name || !name.toLowerCase().includes(nameSubstring.toLowerCase())) return;
+        matches.set(p.id, { id: p.id, name, peripheral: p });
+      };
+
+      const waitForPoweredOn = async (ms) => {
+        if (noble.state === 'poweredOn') return true;
+        return new Promise((resolve) => {
+          const t = setTimeout(() => {
+            noble.removeListener('stateChange', handler);
+            resolve(false);
+          }, Math.max(100, ms ?? 3000));
+          const handler = (state) => {
+            if (state !== 'poweredOn') return;
+            clearTimeout(t);
+            noble.removeListener('stateChange', handler);
+            resolve(true);
+          };
+          noble.on('stateChange', handler);
+        });
+      };
+
+      const startScanSafe = async () => {
+        // allowDuplicates=true improves reliability on Windows stacks that occasionally miss the first discover
+        // after toggling scanning.
+        try {
+          await noble.startScanningAsync([], true);
+          return;
+        } catch (_) {
+          // try to recover from "already scanning" / transient adapter issues
+        }
+        try {
+          await noble.stopScanningAsync();
+        } catch (_) {
+          // ignore
+        }
+        await sleep(150);
+        await noble.startScanningAsync([], true);
+      };
+
+      noble.on('discover', discoverHandler);
+      try {
+        const ok = await waitForPoweredOn(3500);
+        if (!ok) throw new Error(`Bluetooth adapter not ready (state=${String(noble.state || 'unknown')})`);
+
+        // Some Windows BLE stacks behave better if scanning is restarted at least once during a longer scan window.
+        const total = Math.max(500, Number(timeoutMs ?? 5000));
+        const sliceMs = Math.max(800, Math.min(2500, Math.round(total / 2)));
+        await startScanSafe();
+        await sleep(sliceMs);
+        await noble.stopScanningAsync();
+        await sleep(150);
+        await startScanSafe();
+        await sleep(Math.max(0, total - sliceMs));
+      } finally {
+        noble.removeListener('discover', discoverHandler);
+        try {
+          await noble.stopScanningAsync();
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      return Array.from(matches.values());
+    });
   }
 
   async connect(target) {

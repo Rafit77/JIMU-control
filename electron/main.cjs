@@ -691,7 +691,7 @@ const registerIpc = () => {
   });
 
   ipcMain.handle('jimu:scan', async () => {
-    const devices = await JimuBleClient.scan({ timeoutMs: 4000 });
+    const devices = await JimuBleClient.scan({ timeoutMs: 8000 });
     return devices.map((d) => ({ id: d.id, name: d.name || 'Unknown' }));
   });
   ipcMain.handle('jimu:connect', async (_evt, target) => {
